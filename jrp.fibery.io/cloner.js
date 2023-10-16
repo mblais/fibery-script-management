@@ -3,6 +3,7 @@ const scriptSource          = '_FIBERY/cloner.js'
 const API_TOKEN             = '5ca15987.3c0091232ae3a06a509ca0601213f26a844' // Required to copy Files attachments - See Workspace menu | Settings | Personal | API Keys
 const fiberyAccountHostName = 'https://jrp.fibery.io'       // Required to copy Files attachments
 
+
 // Clone subject entities from their related Template entity, including related entities.
 // This overwrites the subject entities with their Template entities.
 // "subject" refers to a target entity that is being cloned/overwritten from its corresponding template entity.
