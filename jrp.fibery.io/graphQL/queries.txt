@@ -1,0 +1,20 @@
+# graphQL queries for use with doQuery.sh
+
+# Mark Call Stats for reassociation
+SPACE=REPORTS; QUERY='mutation{ callStats( modificationDate: {less:"2023-10-13T23:20:00.000Z"} period:{name: {in: ["Week","Month"]}} limit: 1000 orderBy:{modificationDate:ASC}) {executeAsBackgroundJob{jobId actions{ update(reassociate: true) {message}}}}}'
+
+# Mark old Calls for Freezing and Unlink from Call Stats
+SPACE=Zoho_GC; QUERY='# Mark old Calls for Freezing and Unlink from Call Stats
+mutation {
+  calls(
+    callStartTime: { less:     "2023-09-12" }
+    callStats:     { isEmpty:  false }
+    status:        { isNull:   true }
+    orderBy:       { modificationDate:ASC }  # Oldest first
+    limit: 300
+  )
+  { executeAsBackgroundJob { jobId actions {
+    update( status: "Freeze" )  {message}
+    unlinkCallStats             {message}
+  }}}
+}'
