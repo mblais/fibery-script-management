@@ -1,7 +1,10 @@
-const path                          = require('node:path')
+// Test processing of command-line args, env vars, exec child process
+
+const fs                            = require('node:fs')
+const { join }                      = require('node:path')
 const assert                        = require('node:assert').strict
 const { parseArgs }                 = require('node:util')              // https://nodejs.org/api/util.html#utilparseargsconfig
-const { execSync }                  = require('node:child_process')
+const { execFileSync }              = require('node:child_process')
 
 const {log,warn,error}              = console
 
@@ -22,13 +25,16 @@ assert.ok( FIBERY, 'FIBERY env var should be the path to the root of the Fibery 
 assert.doesNotMatch( FIBERY, /[;:<>|$`]/, `dangerous shell characaters in FIBERY env var: ${FIBERY}` )
 
 // Call fiberyConfig.sh to get additional environment vars for the selected Fibery domain
-const moreEnvVars = execSync( path.join(FIBERY, 'fiberyConfig.sh') ).toString()
-
-// Add the additional env vars to process.env
-for( const line of moreEnvVars.split(/[\r\n]+/) ) {
-    const [, name, value] = line.match( /(\w+)\s*=\s*(.+)/ ) ?? []
-    if (name) process.env[name] = value
+const cfg = join(FIBERY, 'fiberyConfig.sh')
+if (fs.statSync(cfg)) {
+    const moreEnvVars = execFileSync(cfg, ['-0', process.env.FIBERY_DOMAIN ?? '']).toString()
+    // Add the additional env vars to process.env
+    for( const line of moreEnvVars.split('\0') ) {
+        const [, name, value] = line.match( /(\w+)=([\S\s]*)/ ) ?? []
+        if (name) process.env[name] = value
+    }
 }
 
 // Dump Fibery env vars:
 log( Object.fromEntries( Object.keys(process.env).filter( k => k.match(/fibery/i) ).map( k => [k, process.env[k]] ) ) )
+ 
