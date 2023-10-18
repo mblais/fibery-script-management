@@ -1,0 +1,13 @@
+* Copy.*
+* Copy (*).*
+.*/
+.*
+*.png
+*.jpg
+*.psd
+*.pdf
+*.log*
+*.csv
+*.tsv
+*.zip
+**/\#*
