@@ -5,6 +5,7 @@
 
 [[ $1 = '-0' ]] && { declare nulls=1; shift; }
 declare FIBERY_DOMAIN=${1:-$FIBERY_DOMAIN}
+set -e
 
 case ${FIBERY_DOMAIN:?} in
     'jrp.fibery.io') 
