@@ -15,6 +15,17 @@ declare FIBERY_DOMAIN=jrp.fibery.io
 source "${?:FIBERY}/fiberyConfig.sh"
 # sed -E '/^\s*#/ d; s/\s+#.*//; s/^\s*//; s/\s+$//; s/\s+/ /g;' | tr '\n' ' ' | escape
 
+
+# List all Spaces
+declare -a args=(
+    "https://${FIBERY_DOMAIN:?}/api/commands?reason=preload&command=fibery.app/get-available-apps"
+    -H "Authorization: Token ${FIBERY_API_KEY}"
+    -H 'content-type: application/json; charset=utf-8'
+    --compressed --data-raw '[{"command":"fibery.app/get-available-apps","args":{}}]'
+)
+curl --silent "${args[@]}"
+
+
 # Enable/disable a Button:
 source ../fiberyConfig.sh
 declare automationId=62a7687876e2fff160b5b7e5     # "name": "⚡Bulk Edit Tasks"
@@ -29,7 +40,7 @@ declare -a args=(
 curl --silent "${args[@]}"
 
 
-# Get all Button definitions for a Type
+# Get all Button definitions for a Type/DB
 declare typeId='138ad153-99a9-4048-bce3-a0eb421d3866'
 declare -a args=(
     "https://${FIBERY_DOMAIN:?}/api/automations/buttons/for-type/${typeId:?}"
@@ -39,7 +50,7 @@ declare -a args=(
 curl --silent "${args[@]}"
 
 
-# Get all Automation Rules definitions for a Type
+# Get all Automation Rules definitions for a Type/DB
 declare typeId='138ad153-99a9-4048-bce3-a0eb421d3866'
 declare -a args=(
     "https://${FIBERY_DOMAIN:?}/api/automations/auto-rules/for-type/${typeId:?}"
