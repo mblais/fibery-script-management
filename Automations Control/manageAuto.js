@@ -177,6 +177,7 @@ async function fiberyFetch( url, method, data=null ) {
     return response.json()
 }
 
+// Class to represent Fibery Spaces and Types
 class FiberyWorkspaceSchema {
     constructor( schemaRaw ) {
         this.types = Object.fromEntries( schemaRaw['fibery/types']
@@ -215,7 +216,7 @@ async function findPathById( containingDir, id ) {
     return files.find( dirName => dirName.indexOf(id) >= 0 )
 }
 
-// Get the cache dir for the given Space
+// Get the cache dir for a Space
 async function getSpaceDir( spaceName=null ) {
     let dir = path.join(FIBERY, FIBERY_DOMAIN)
     if (spaceName) {
@@ -236,7 +237,7 @@ async function getSpaceDir( spaceName=null ) {
     return dir
 }
 
-// Get the cache dir for the given Space + Type
+// Get the cache dir for a Space + Type
 async function getTypeDir( spaceName, typeId ) {
     let dir = await getSpaceDir(spaceName)
     if (typeId) {
@@ -256,7 +257,7 @@ async function getTypeDir( spaceName, typeId ) {
     return dir
 }
 
-// Get a cache dir
+// Get a cache dir within a Space + Type
 async function getCacheDir(spaceName, typeId, cacheName) {
     const dir = path.join( await getTypeDir(spaceName, typeId), '.'+cacheName )
     if ( ! await doesPathExist(dir) ) {
@@ -269,7 +270,7 @@ async function getCacheDir(spaceName, typeId, cacheName) {
     return dir
 }
 
-// Get cached or fresh data
+// Get some cached or fresh data
 async function cachify( spaceName, typeId, cacheName, creatorFunc, useCache=true ) {
     const cacheDir          = await getCacheDir(spaceName, typeId, cacheName)
     if (options.cached && useCache) {
@@ -286,7 +287,7 @@ async function cachify( spaceName, typeId, cacheName, creatorFunc, useCache=true
     }
     // Get fresh data
     const obj = await creatorFunc()
-    // Write fresh data to new cache entry
+    // Write the fresh data to a new cache entry
     const cacheFilename = path.join(cacheDir, `${startTimestamp}.jsonc`)
     const content       = `//# ${cacheFilename}\n` + stringify(obj)
     await fs.writeFile(cacheFilename, content)
@@ -295,7 +296,7 @@ async function cachify( spaceName, typeId, cacheName, creatorFunc, useCache=true
 
 //---------------------------------------------------------------------------------------------------
 
-// Get list of Workspace Spaces
+// Get the list of Spaces
 async function getWorkspaceSpaces() {
     spaces = await cachify(null, null, 'spaces', async() => {
         const data = await fiberyFetch( '/api/commands?reason=preload&command=fibery.app/get-available-apps', 'POST', '[{"command":"fibery.app/get-available-apps","args":{}}]' )
@@ -311,7 +312,7 @@ async function getWorkspaceSpaces() {
     assert.ok(Object.keys(spaces)?.length > 0)
 }
 
-// Get Workspace schema
+// Get the Workspace schema
 async function getWorkspaceSchema() {
     const data = await cachify(null, null, 'schema',
         () => fiberyFetch( '/api/commands', 'POST', '[{"command":"fibery.schema/query"}]' ))
@@ -320,7 +321,7 @@ async function getWorkspaceSchema() {
     // dbg( Object.entries(schema.spaces).map( ([n,s]) => [ n, s['fibery/id'] ] ) )    // Dump Spaces names and id's
 }
 
-// Make a filter function to filter names
+// Make a filter function to filter names of Rules/Buttons/Spaces/Types
 function makeFilter( pattern, field='name' ) {
     if (!pattern || pattern==='.' || pattern==='*')
         return () => true                                       // match everything
@@ -343,7 +344,7 @@ function* spaces_filtered() {
     yield* Object.values(result).filter( filtr )
 }
 
-// Generate all Type names of the given space that pass the Types filter
+// Generate all Type names (in the given space) that pass the Types filter
 function* types_filtered( space ) {
     if (!space?.types) return           // Some Spaces have no types/DBs defined
     const filtr = makeFilter( options.type )
@@ -364,7 +365,7 @@ function* rules_filtered( rules ) {
     yield* rules.filter( r => filtr(`${r.name} =${r.id}`) )
 }
 
-// Get Button definitions for a Type
+// Get all Button definitions for a Type
 async function getButtonsForType( space, typeId, useCache=false ) {
     const result = await cachify( space.name, typeId, 'buttons',
         async() => fiberyFetch(`/api/automations/buttons/for-type/${typeId}`, 'GET'), useCache )
@@ -372,7 +373,7 @@ async function getButtonsForType( space, typeId, useCache=false ) {
     return result
 }
 
-// Get Rule definitions for a Type
+// Get all Rule definitions for a Type
 async function getRulesForType( space, typeId, useCache=false ) {
     const result = await cachify( space.name, typeId, 'rules',
         async() => fiberyFetch(`/api/automations/auto-rules/for-type/${typeId}`, 'GET'), useCache )
@@ -380,8 +381,8 @@ async function getRulesForType( space, typeId, useCache=false ) {
     return result
 }
 
-// Save an Automation script
-async function saveAutomationScript(automationName, typeDir, automationId, actionId, script) {
+// Save a Button or Rule action script locally
+async function saveAutomationScript( automationName, typeDir, automationId, actionId, script ) {
     const Ids   = `=${automationId} =${actionId}`
     let   fname = `${automationName} ${Ids}.js`
     const existingFile = await findPathById(typeDir, Ids)
@@ -397,7 +398,7 @@ async function saveAutomationScript(automationName, typeDir, automationId, actio
 }
 
 //---------------------------------------------------------------------------------------------------
-// Pull: Get automation definitions from Fibery Workspace
+// Pull: Get automation script definitions from Fibery Workspace
 //
 async function pull( cmd ) {
     await doSetup()
@@ -412,7 +413,7 @@ async function pull( cmd ) {
             const typeDir = await getTypeDir(space.name, typeId)
 
             if (options.button) {
-                const buttons = await getButtonsForType(space, typeId)
+                const buttons = await getButtonsForType(space, typeId, false)
                 for (const button of buttons_filtered(buttons)) {
                     // Check each Button Action for scripts
                     for (const action of button.actions) {
@@ -424,7 +425,7 @@ async function pull( cmd ) {
             }
 
             if (options.rule) {
-                const rules = await getRulesForType(space, typeId)
+                const rules = await getRulesForType(space, typeId, false)
                 for (const rule of rules_filtered(rules)) {
                     // Check each Rule Action for scripts
                     for (const action of rule.actions) {
@@ -439,7 +440,7 @@ async function pull( cmd ) {
 }
 
 //---------------------------------------------------------------------------------------------------
-// Push: Update Fibery Workspace automations from local files
+// Push: Update Fibery Workspace automation script definitions from local files
 //
 async function push( cmd ) {
     await doSetup()
@@ -448,7 +449,7 @@ async function push( cmd ) {
 }
 
 //---------------------------------------------------------------------------------------------------
-// List: List Buttons/Rules
+// List: List Button/Rule automation scripts
 //
 async function list( cmd ) {
     await doSetup()
@@ -472,6 +473,7 @@ async function main() {
     try {
         let cmd = positionals.shift()
         switch (cmd || '') {
+
             case 'list':
                 await list(cmd)
                 break
