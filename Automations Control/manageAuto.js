@@ -3,13 +3,13 @@
 //TODO:
 // git mv, insertGitInfo.sh
 
+const fss                           = require('node:fs')                // Synchronous
 const fs                            = require('node:fs/promises')
 const path                          = require('node:path')
 const assert                        = require('node:assert').strict
 const { parseArgs }                 = require('node:util')              // https://nodejs.org/api/util.html#utilparseargsconfig
 const childProcess                  = require('node:child_process')
-
-if (process.env.NODE_ENV !== 'production') require('longjohn')      // stack trace debugging support
+const { dir } = require( 'node:console' )
 
 //---------------------------------------------------------------------------------------------------
 
@@ -26,20 +26,19 @@ const   thisScriptName              = path.basename( process.argv[1] )      // N
 //---------------------------------------------------------------------------------------------------
 
 const stringify = (arg) => JSON.stringify(arg,null,2)
-
 const timestamp = ( d=null ) => (d ?? new Date()).toLocaleString('sv', {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric', fractionalSecondDigits: 3}).replace(',', '.')
 const startTimestamp = timestamp()
 
 function error(...args) {
-    // if (typeof args[0]==='string') args[0] = `${exe}: ${args[0]}`
+    // if (typeof args[0]==='string') args[0] = `${thisScriptName}: ${args[0]}`
     // if (args[0] instanceof Error)
     console.error(...args)
     if (!returnCode) returnCode = 1
     debugger
 }
 
-const doesPathExist  = async (fpath)                => fs.stat(fpath).catch( ()=>null )
-const doesDirContain = async (dirPath, fileName)    => doesPathExist(path.join(dirPath, fileName))
+const doesPathExist  = (fpath)                => { try{ return fss.statSync(fpath) } catch(e){ return null } }  // SYNCHRONOUS
+const doesDirContain = (dirPath, fileName)    => doesPathExist(path.join(dirPath, fileName))
 
 //---------------------------------------------------------------------------------------------------
 // Setup
@@ -53,7 +52,7 @@ const commandLineOptions = {
     rule:           { type: 'string',   short: 'r',                 },
     cache:          { type: 'boolean',  short: 'c',  default: false },
     nogit:          { type: 'boolean',  short: 'g',  default: false },
-    init:           { type: 'boolean',               default: false },
+    init:           { type: 'boolean',  short: 'i',  default: false },
     fake:           { type: 'boolean',  short: 'f',  default: false },
     verbose:        { type: 'boolean',  short: 'v',  default: false },
     // yes:            { type: 'boolean',  short: 'y',  default: false },
@@ -142,20 +141,20 @@ COMMANDS:
 OPTIONS:
 
     --domain      -d    Fibery domain, e.g. example.fibery.io
-    --space       -s    Space   name filter (case insensitive)
-    --type        -t    Type/DB name filter (case insensitive)
-    --button      -b    Button  name filter (case insensitive)
-    --rule        -r    Rule    name filter (case insensitive)
+    --space       -s    Space   name filter
+    --type        -t    Type/DB name filter
+    --button      -b    Button  name filter
+    --rule        -r    Rule    name filter
     --cache       -c    Use existing cached info instead querying Fibery API
-    --nogit       -g    Don't use git (not tracked)
-    --init              Create any missing directories for Spaces and Types
+    --nogit       -g    Don't use git (if script files are not tracked in git)
+    --init        -i    Create missing directories for Spaces and Types
     --fake        -f    Dry run: don't actually change or write anything
     --verbose     -v    Verbose output
 
 NAME FILTERS:
 
     Name filters (for Space/Type/Button.Rule) are glob-like, or regex if preceded by '/'.
-    A filter is negated if the first character is '-'.
+    A filter is negated if the first character is '-'. Filters are always case-insensitive.
 
 REQUIRED ENVIRONMENT VARIABLES:
 
@@ -236,7 +235,7 @@ function execFileSync( cmd, args, options ) {
 
 // Create a dir if it doesn't exist
 async function maybeCreateDir( type, dir ) {
-    if ( ! await doesPathExist(dir) ) {
+    if ( !doesPathExist(dir) ) {
         if (!options.init)
             error(`Missing ${type} dir "${dir}" - Use the \`--init\` option to create it automatically`)
         warn(`Creating ${type} dir: "${dir}"`)
@@ -247,21 +246,21 @@ async function maybeCreateDir( type, dir ) {
 }    
 
 // Check whether a file/dir should be renamed (i.e. it was found by its Id but with a different name)
-async function maybeRename( typeDescription, oldPath, newPath ) {
-    if (!oldPath || oldPath===newPath) return newPath
+async function maybeRenameExisting( typeDescription, existingPath, newPath ) {
+    if (!existingPath || existingPath===newPath) return newPath
     //TODO: check with user, and maybe rename the dir to the new name
-    dbg(`Rename:\t${typeDescription}     \t"${oldPath}" \t"${newPath}"`)
-    if (options.fake) return oldPath
+    dbg(`Rename:\t${typeDescription}     \t"${existingPath}" \t"${newPath}"`)
+    if (options.fake) return existingPath
     if (options.nogit) {
         // Regular OS rename
-        await fs.rename(oldPath, newPath)
+        await fs.rename(existingPath, newPath)
         return newPath
     } else {
         // Rename using `git mv`
-        let gitmv = execFileSync('git', ['mv', oldPath, newPath], {cwd: workspace})
+        let gitmv = execFileSync('git', ['mv', existingPath, newPath], {cwd: workspace})
         if (gitmv.message) {
             warn('git mv: ' + gitmv.message)
-            return oldPath
+            return existingPath
         }
         if (gitmv) dbg(gitmv)
         return newPath
@@ -274,7 +273,7 @@ async function findSpaceDir_byId( spaceId ) {
     const token     = `.${spaceId}.space`      // The space should contain this token file
     for (const fname of (await fs.readdir(allSpaces).catch( ()=>[] )) ) {
         const dir   = path.join(allSpaces, fname)
-        if (await doesDirContain(dir, token))
+        if (doesDirContain(dir, token))
             return dir
     }
     return null
@@ -285,7 +284,7 @@ async function findTypeDir_byId( spaceDir, typeId ) {
     const token     = `.${typeId}.type`      // The space should contain this token file
     for (const fname of (await fs.readdir(spaceDir).catch( ()=>[] )) ) {
         const dir   = path.join(spaceDir, fname)
-        if (await doesDirContain(dir, token))
+        if (doesDirContain(dir, token))
             return dir
     }
     return null
@@ -325,7 +324,7 @@ async function getSpaceDir( space=null ) {
         return maybeCreateDir('space', dir)
     // Found by Id - has the dir name changed?
     const foundDirName   = path.basename(foundDir)
-    dir = await maybeRename('space', foundDir, dir)
+    dir = await maybeRenameExisting('space', foundDir, dir)
     return dir
 }
 
@@ -341,7 +340,7 @@ async function getTypeDir( space, typeId ) {
         return maybeCreateDir('DB', dir)
     // Found by Id - has the dir name changed?
     const foundDirName   = path.basename(foundDir)
-    dir = await maybeRename('DB', foundDir, dir)
+    dir = await maybeRenameExisting('DB', foundDir, dir)
     return dir
 }
 
@@ -480,7 +479,20 @@ async function getRulesForType( space, typeId, useCache=false ) {
     return result
 }
 
-// Make the Fibery api header for a script file
+// Update all Button definitions for a Type
+async function updateButtonsForType( typeId, buttons ) {
+    if (options.fake) return
+    const result = await fiberyFetch(`/api/automations/buttons/for-type/${typeId}`, 'PUT', buttons)
+    debugger    // success??
+}
+
+// Update all Rule definitions for a Type
+async function updateRulesForType( typeId, rules ) {
+    if (!options.fake)
+        return fiberyFetch(`/api/automations/auto-rules/for-type/${typeId}`, 'PUT', rules)
+}
+
+// Make the Fibery api header (comment) for a script file
 function scriptApiHeader( automationId, actionId ) {
      return `//.fibery SCRIPTID=${automationId} ACTIONID=${actionId}`
 }
@@ -494,19 +506,27 @@ function scriptApiHeader( automationId, actionId ) {
 //     return gitstatus.toString()
 // }
 
-// Build the git header comment for a script file
+// Execute a git command synchronously
+function execGitCommandSync( gitArgs, execOptions ) {
+    const gitProgram = 'git'
+    const result     = execFileSync(gitProgram, gitArgs, execOptions)
+    return result
+}
+
+// Create the git header-comment for a script file
 async function scriptGitHeader( filePath ) {
     if (options.nogit) return ''
     const cwd       = path.dirname(filePath), filename = path.basename(filePath)
     // const status    = gitStatus(cwd, filename)
     // if (!status) return ''
-    let gitlog      = execFileSync('git', ['log', '--decorate', '-n1', '--', filename], {cwd})
+    let gitlog      = execGitCommandSync(['log', '--decorate', '-n1', '--', filename], {cwd})
     if (gitlog.stderr) {
         warn(gitlog.stderr.toString())
         return ''
     }
     gitlog          = gitlog.toString()
     if (!gitlog) return ''
+    // Return a C-style comment block with the git log info
     return '/*.git\n'
         + gitlog.split('\n').map( line => '** '+line ).join('\n')
         + '\n*/\n'
@@ -515,26 +535,37 @@ async function scriptGitHeader( filePath ) {
 // Save a Button or Rule action script locally
 async function saveAutomationScript( automationName, typeDir, automationId, actionId, scriptsCount, script ) {
     const apiHeader     = scriptApiHeader(automationId, actionId)
-    const scriptExt     = scriptsCount>1 ? ` ~${actionId.slice(-4)}` : ''                // To differentiate multiple scripts within the same Automation
+    const scriptExt     = scriptsCount>1 ? ` ~${actionId.slice(-4)}` : ''               // To differentiate multiple scripts within the same Automation
     let   newFile       = path.join(typeDir, `${automationName}${scriptExt}.js`)        // What the script filename SHOULD be
     const existingFile  = await find_scriptFile_byHeader(typeDir, newFile, apiHeader)
-    newFile             = await maybeRename('script', existingFile, newFile)
+    newFile             = await maybeRenameExisting('script', existingFile, newFile)
     // const gitHeader     = await scriptGitHeader(newFile)
     dbg(`Saving script:      \t${newFile}`)
     script = script.replace(/^\/\/.fibery\s+.*[\r\n]+/, '' )                // Delete old script headers
     //            .replace(/\/\*.git\b[\s\S]*?\*\/\s*/)
     // script = `${apiHeader}\n${gitHeader}\n${script}`
-    script = `${apiHeader}\n${script}`
+    script = `${apiHeader}\n${script}`                                      // Add current headers
     if (!options.fake)
         await fs.writeFile(newFile, script)
 }
 
+// Find the local script filename for an automation (Button or Rule)
+async function localScriptPath( automationName, typeDir, automationId, actionId ) {
+    const apiHeader     = scriptApiHeader(automationId, actionId)
+    const scriptAction  = actionId.slice(-4)                                // To differentiate multiple scripts within the same Automation
+    let   newFile       = path.join(typeDir, `${automationName} ~${scriptAction}.js`)        // What the script filename SHOULD be
+    const existingFile  = await find_scriptFile_byHeader(typeDir, newFile, apiHeader)
+    newFile             = await maybeRenameExisting('script', existingFile, newFile)
+    return newFile
+}
+
+
 //---------------------------------------------------------------------------------------------------
 // Pull: Get automation script definitions from Fibery Workspace
 //
-async function pull( cmd ) {
+async function pull() {
     await doSetup()
-    dbg(`pull(${cmd})\noptions: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
+    dbg(`pull - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
 
     for (const space of spaces_filtered(workspace)) {
         dbg( `Scanning space:        \t${space.name}\t"${space.id}"` )
@@ -548,8 +579,8 @@ async function pull( cmd ) {
                 const buttons = await getButtonsForType(space, typeId, false)
                 for (const button of buttons_filtered(buttons)) {
                     const scriptsCount = button.actions.filter( action => action.args.script?.value ).length  // How many script actions?
-                    // Check each Action for scripts
                     dbg(`Scanning Button: \t${button.name} \t${button.id}`)
+                    // Check each Action for scripts
                     for (const action of button.actions) {
                         const script = action?.args?.script?.value
                         if (script==null) continue                   // Ignore this action if it's not a script
@@ -562,8 +593,8 @@ async function pull( cmd ) {
                 const rules = await getRulesForType(space, typeId, false)
                 for (const rule of rules_filtered(rules)) {
                     const scriptsCount = rule.actions.filter( action => action.args.script?.value ).length  // How many script actions?
-                    // Check each Action for scripts
                     dbg(`Scanning Rule:   \t${rule.name} \t${rule.id}`)
+                    // Check each Action for scripts
                     for (const action of rule.actions) {
                         const script = action?.args?.script?.value
                         if (script==null) continue                   // Ignore this action if it's not a script
@@ -579,12 +610,12 @@ async function pull( cmd ) {
 //---------------------------------------------------------------------------------------------------
 // Push: Get automation script definitions from Fibery Workspace
 //
-async function push( cmd ) {
+async function push() {
     await doSetup()
-    dbg(`push(${cmd})\noptions: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
+    dbg(`push - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
 
     for (const space of spaces_filtered(workspace)) {
-        dbg( `Scanning space:        \t${space.name}\t"${space.id}"` )
+        dbg(    `Scanning space:     \t${space.name}\t"${space.id}"` )
 
         for (const type of types_filtered(space)) {
             dbg(`Scanning DB:        \t${type['fibery/name']}\t"${type['fibery/id']}"`)
@@ -592,50 +623,66 @@ async function push( cmd ) {
             const typeDir = await getTypeDir(space, typeId)
 
             if (options.button) {
+                let   dirty   = false
                 const buttons = await getButtonsForType(space, typeId, false)
                 for (const button of buttons_filtered(buttons)) {
-                    // Check each Button Action for scripts
-                    dbg(`Scanning Button: \t${button.name}`)
+                    dbg(`Scanning Button:    \t${button.name} \t${button.id}`)
+                    // const scriptsCount = button.actions.filter( action => action.args.script?.value ).length  // How many script actions exist in the automation?
+                    // if (scriptsCount==0) continue
+
+                    // Check each Action for scripts
+                    let actionNum = 0
                     for (const action of button.actions) {
-                        const script = action?.args?.script?.value
-                        if (script==null) continue                   // Ignore this action if it's not a script
-                        await saveAutomationScript(`BUTTON~ ${button.name}`, typeDir, button.id, action.id, script)
+                        ++actionNum
+                        if (!action?.args?.script) continue                 // Ignore this action: not a script
+                        const newFile = await localScriptPath(`BUTTON~ ${button.name}`, typeDir, button.id, action.id)
+                        if (!doesPathExist(newFile)) {
+                            warn(`Local script not found: ${newFile}}`)
+                            continue
+                        }
+                        let script          = (await fs.readFile(newFile)).toString()
+                        script              = script.replace(/^\/\/.fibery\s+.*[\r\n]+/, '' )                // Delete old script headers
+                                                    .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '')
+                        const apiHeader     = scriptApiHeader(button.id, action.id)
+                        const gitHeader     = await scriptGitHeader(newFile)
+                        script              = `${apiHeader}\n${gitHeader}\n${script}`                        // Add current headers
+                        action.args.script.value = script               // Update the automation action with the local script
+                        dbg(` - pushing script:    \t${newFile}`)
+                        dirty = true
                     }
                 }
+                if (dirty) {
+                    // Save updated automations to Fibery
+                    log(`Pushing Button definitions for [${space.name}/${type.name}]`)
+                    await updateButtonsForType(typeId, buttons)
+                }
+                else
+                    dbg(` - no actions to update for [${space.name}/${type.name}]`)
             }
 
-            if (options.rule) {
-                const rules = await getRulesForType(space, typeId, false)
-                for (const rule of rules_filtered(rules)) {
-                    // Check each Rule Action for scripts
-                    dbg(`Scanning Rule:   \t${rule.name}`)
-                    for (const action of rule.actions) {
-                        const script = action?.args?.script?.value
-                        if (script==null) continue                   // Ignore this action if it's not a script
-                        await saveAutomationScript(`RULE~ ${rule.name}`, typeDir, rule.id, action.id, script)
-                    }
-                }
-            }
+            // if (options.rule) {
+            //     const rules = await getRulesForType(space, typeId, false)
+            //     for (const rule of rules_filtered(rules)) {
+
         }
     }
 }
 
-
 //---------------------------------------------------------------------------------------------------
 // List: List Button/Rule automation scripts
 //
-async function list( cmd ) {
+async function list() {
     await doSetup()
-    dbg(`list(${cmd})\noptions: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
+    dbg(`list - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
     debugger
 }
 
 //---------------------------------------------------------------------------------------------------
 // Purge: Delete cache entries older than {days}
 //
-async function purge( cmd ) {
+async function purge() {
     await doSetup()
-    dbg(`purge(${cmd})\noptions: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
+    dbg(`purge - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
     debugger
 }
 
@@ -648,19 +695,19 @@ async function main() {
         switch (cmd || '') {
 
             case 'list':
-                await list(cmd)
+                await list()
                 break
 
             case 'pull':
-                await pull(cmd)
+                await pull()
                 break
 
             case 'push':
-                await push(cmd)
+                await push()
                 break
             
             case 'purge':
-                await purge(cmd)
+                await purge()
                 break
             
             case 'help':
