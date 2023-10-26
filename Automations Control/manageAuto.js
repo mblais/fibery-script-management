@@ -3,12 +3,12 @@
 //TODO:
 // git mv, insertGitInfo.sh
 
-const fss                           = require('node:fs')                // Synchronous
 const fs                            = require('node:fs/promises')
+const fss                           = require('node:fs')                // Synchronous
 const path                          = require('node:path')
 const assert                        = require('node:assert').strict
 const { parseArgs }                 = require('node:util')              // https://nodejs.org/api/util.html#utilparseargsconfig
-const childProcess                  = require('node:child_process')
+const childProcess                  = require('node:child_process')     // Synchronous
 const { dir } = require( 'node:console' )
 
 //---------------------------------------------------------------------------------------------------
@@ -21,7 +21,7 @@ const dbg = (...args) => { if (debug) log(...args) }
 
 let     workspace, schema, spaces
 let     returnCode                  = 0
-const   thisScriptName              = path.basename( process.argv[1] )      // Name of this file
+const   thisScriptName              = path.basename( process.argv[1] ).replace(/\.[^.]+$/, '')    // Name of this file, without extension
 
 //---------------------------------------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ function error(...args) {
 }
 
 const doesPathExist  = (fpath)                => { try{ return fss.statSync(fpath) } catch(e){ return null } }  // SYNCHRONOUS
-const doesDirContain = (dirPath, fileName)    => doesPathExist(path.join(dirPath, fileName))
+const doesDirContain = (dirPath, fileName)    => doesPathExist(path.join(dirPath, fileName))                    // SYNCHRONOUS
 
 //---------------------------------------------------------------------------------------------------
 // Setup
@@ -70,22 +70,18 @@ async function doSetup() {
     assert.ok(FIBERY_DOMAIN, `Fibery workspace domain must be defined either by FIBERY_DOMAIN env var or --domain arg`)
 
     const configScript = path.join(FIBERY, 'fiberyConfig.sh')
-    // Call fiberyConfig.sh to get additional environment vars for the selected Fibery domain?
-    if (!process.env.FIBERY_API_KEY && await fs.stat(configScript).catch(e=>null)) {
-        try {
-            if (await fs.stat(configScript).catch(e=>null)) {
-                const moreEnvVars = execFileSync(configScript, ['-0', FIBERY_DOMAIN ?? '']).toString()
-                // Add Fibery env vars to process.env
-                for( const line of moreEnvVars.split('\0') ) {
-                    const [, name, value] = line.match( /(\w+)=([\S\s]*)/ ) ?? []
-                    if (name) process.env[name] = value
-                }
-            }
-        } catch (err) {}
-    }
+    if (!process.env.FIBERY_API_KEY && doesPathExist(configScript)) try {
+        // Call fiberyConfig.sh to get additional environment vars for the selected Fibery domain
+        const moreEnvVars = execFileSync(configScript, ['-0', FIBERY_DOMAIN ?? '']).toString()
+        // Add Fibery env vars to process.env
+        for( const line of moreEnvVars.split('\0') ) {
+            const [, name, value] = line.match( /(\w+)=([\S\s]*)/ ) ?? []
+            if (name) process.env[name] = value
+        }
+    } catch (err) {}
     assert.ok(process.env.FIBERY_API_KEY, `FIBERY_API_KEY env var is not defined for workspace "${FIBERY_DOMAIN}"`)
     
-    await getWorkspace(FIBERY_DOMAIN)
+    getWorkspace(FIBERY_DOMAIN)
     await getSpaces(workspace)
     await getSchema(workspace)
 }
@@ -103,17 +99,17 @@ ${thisScriptName} list
 `)
             break
 
-        case 'push':
-            warn(`
-${thisScriptName} push
-    Push automation definitions to Fibery Workspace
-`)
-            break
-
         case 'pull':
             warn(`
 ${thisScriptName} pull
     Get automation definitions from Fibery Workspace
+`)
+            break
+
+        case 'push':
+            warn(`
+${thisScriptName} push
+    Push automation definitions to Fibery Workspace
 `)
             break
 
@@ -161,7 +157,7 @@ REQUIRED ENVIRONMENT VARIABLES:
     FIBERY              Path to the Fibery domains directory (root of stored scripts and cache)
     FIBERY_API_KEY      From "Fibery Setings > API Keys" (specific to a Fibery Workspace)
 `)
-        break
+            break
 
         default:
             error(`Unrecognized command "${cmd}"`)
@@ -216,7 +212,13 @@ const spaceId_from_spaceName    = (spaceName) => spaces[spaceName].id
 // File functions
 //
 
-// Execute a subprocess
+// Readdir (sync, no expections thrown)
+function readdirSync( dir ) {
+    try { return fss.readdirSync(dir) }
+    catch(err) { return [] }
+}
+
+// Execute a subprocess (sync)
 function execFileSync( cmd, args, options ) {
     try {
         let result = childProcess.execFileSync(cmd, args, options) 
@@ -234,44 +236,49 @@ function execFileSync( cmd, args, options ) {
 }
 
 // Create a dir if it doesn't exist
-async function maybeCreateDir( type, dir ) {
-    if ( !doesPathExist(dir) ) {
+function maybeCreateDir( type, dir ) {
+    if (!doesPathExist(dir)) {
         if (!options.init)
             error(`Missing ${type} dir "${dir}" - Use the \`--init\` option to create it automatically`)
         warn(`Creating ${type} dir: "${dir}"`)
         if (!options.fake)
-            await fs.mkdir(dir, {recursive: true})
+            fss.mkdir(dir, {recursive: true})
     }    
     return dir
 }    
 
-// Check whether a file/dir should be renamed (i.e. it was found by its Id but with a different name)
-async function maybeRenameExisting( typeDescription, existingPath, newPath ) {
+// Check whether a file/dir should be renamed
+// (i.e. if it was found by its Fibery id but with a different name than expected)
+function maybeRenameExisting( typeDescription, existingPath, newPath ) {
     if (!existingPath || existingPath===newPath) return newPath
     //TODO: check with user, and maybe rename the dir to the new name
     dbg(`Rename:\t${typeDescription}     \t"${existingPath}" \t"${newPath}"`)
     if (options.fake) return existingPath
-    if (options.nogit) {
-        // Regular OS rename
-        await fs.rename(existingPath, newPath)
-        return newPath
-    } else {
-        // Rename using `git mv`
-        let gitmv = execFileSync('git', ['mv', existingPath, newPath], {cwd: workspace})
-        if (gitmv.message) {
+    if (!options.nogit) {
+        // Try rename using `git mv`
+        const gitmv = execFileSync('git', ['mv', existingPath, newPath], {cwd: workspace})
+        if (gitmv.message && !gitmv.message.match('not under version control')) {
             warn('git mv: ' + gitmv.message)
             return existingPath
         }
-        if (gitmv) dbg(gitmv)
+        // Regular OS rename
+        fss.renameSync(existingPath, newPath)
         return newPath
     }
 }
 
-// Find an existing Space dir by its Id
-async function findSpaceDir_byId( spaceId ) {
+// Test the specified file's content against the supplied pattern (regex/string)
+function testFileContentMatch( filePath, pattern ) {
+    if (!doesPathExist(filePath)) return null
+    const  content = fss.readFileSync(filePath)?.toString()
+    return content?.match(pattern)
+}
+
+// Find an existing Space dir by its Fibery Id
+function findSpaceDir_byId( spaceId ) {
     const allSpaces = path.join(FIBERY, FIBERY_DOMAIN)
     const token     = `.${spaceId}.space`      // The space should contain this token file
-    for (const fname of (await fs.readdir(allSpaces).catch( ()=>[] )) ) {
+    for (const fname of readdirSync(allSpaces)) {
         const dir   = path.join(allSpaces, fname)
         if (doesDirContain(dir, token))
             return dir
@@ -279,10 +286,10 @@ async function findSpaceDir_byId( spaceId ) {
     return null
 }
 
-// Find an existing Type dir by its Id
-async function findTypeDir_byId( spaceDir, typeId ) {
+// Find an existing Type dir by its Fibery Id
+function findTypeDir_byId( spaceDir, typeId ) {
     const token     = `.${typeId}.type`      // The space should contain this token file
-    for (const fname of (await fs.readdir(spaceDir).catch( ()=>[] )) ) {
+    for (const fname of readdirSync(spaceDir)) {
         const dir   = path.join(spaceDir, fname)
         if (doesDirContain(dir, token))
             return dir
@@ -290,74 +297,81 @@ async function findTypeDir_byId( spaceDir, typeId ) {
     return null
 }
 
-// Does the specified file match the supplied regex/string pattern?
-async function testFileContentMatch( filePath, pattern ) {
-    if (!doesPathExist(filePath)) return null
-    const content = (await fs.readFile(filePath)).toString()
-    return content.match(pattern)
-}
-
-// Find an existing script file by its header line
-async function find_scriptFile_byHeader( typeDir, probableFilePath, header ) {
-    // Test the guessed filePath first
-    if (await testFileContentMatch(probableFilePath, header).catch(()=>null))
-        return probableFilePath
-    // Look for any script file in typeDir that contains the specified header line
-    const ext = path.extname(probableFilePath)
-    for (const fname of (await fs.readdir(typeDir).catch( ()=>[] )) ) {
+// Find an existing script file by its header line (Fibery Id)
+function find_scriptFile_byHeader( typeDir, idealFilePath, header ) {
+    // Test the ideal filePath first
+    if (testFileContentMatch(idealFilePath, header))
+        return idealFilePath
+    // Look for any script file in the typeDir that contains the specified header line
+    const ext = path.extname(idealFilePath)
+    for (const fname of readdirSync(typeDir)) {
         if (!fname.endsWith(ext)) continue              // filter out cache subdirs
         const filePath = path.join(typeDir, fname)
-        if (await testFileContentMatch(filePath, header).catch(()=>null))
+        if (testFileContentMatch(filePath, header))
             return filePath
     }
     return null
 }
 
+// Find the local script file for an automation
+function localScriptPath( automationName, typeDir, automationId, actionId ) {
+    const apiHeader     = scriptApiHeader(automationId, actionId)
+    const scriptAction  = actionId.slice(-4)                                // Differentiates multiple scripts in the same Automation
+    const idealFile     = path.join(typeDir, `${automationName} ~${scriptAction}.js`)   // What the script filename SHOULD be
+    const existingFile  = find_scriptFile_byHeader(typeDir, idealFile, apiHeader)
+    return maybeRenameExisting('script', existingFile, idealFile)
+}
+
 // Get the dir for the given Space
-async function getSpaceDir( space=null ) {
-    if (!space) return path.join( FIBERY, FIBERY_DOMAIN, '.fibery')
-    let dir = path.join(FIBERY, FIBERY_DOMAIN)
-    const currentDirName = `SPACE ${space.name}`        // This is what the dirName should be
-    dir                  = path.join(dir, currentDirName)
-    const foundDir       = await findSpaceDir_byId(space.id)
-    if ( !foundDir )
-        return maybeCreateDir('space', dir)
-    // Found by Id - has the dir name changed?
-    const foundDirName   = path.basename(foundDir)
-    dir = await maybeRenameExisting('space', foundDir, dir)
-    return dir
+function getSpaceDir( space=null ) {
+    if (!space) return path.join(FIBERY, FIBERY_DOMAIN, '.fibery')
+    let dir          = path.join(FIBERY, FIBERY_DOMAIN, `SPACE~ ${space.name}`)         // This is what the dirName should be
+    const foundDir   = findSpaceDir_byId(space.id)
+    if ( !foundDir )  return maybeCreateDir('space', dir)
+    return maybeRenameExisting('space', foundDir, dir)
 }
 
-// Get the dir for the given Space + Type
-async function getTypeDir( space, typeId ) {
-    const spaceDir       = await getSpaceDir(space)
+// Get the dir for the given Type
+function getTypeDir( space, typeId ) {
+    const spaceDir   = getSpaceDir(space)
     if (!typeId) return spaceDir
-    const typeName       = typeName_from_typeId(typeId)
-    const currentDirName = `DB ${typeName}`             // This is what the dirName should be
-    let dir              = path.join(spaceDir, currentDirName)
-    const foundDir       = await findTypeDir_byId(spaceDir, typeId)
-    if ( !foundDir )
-        return maybeCreateDir('DB', dir)
-    // Found by Id - has the dir name changed?
-    const foundDirName   = path.basename(foundDir)
-    dir = await maybeRenameExisting('DB', foundDir, dir)
-    return dir
+    const typeName   = typeName_from_typeId(typeId)
+    const idealDir   = path.join(spaceDir, `DB~ ${typeName}`)                           // This is what the dirName should be
+    const foundDir   = findTypeDir_byId(spaceDir, typeId)
+    if ( !foundDir ) return maybeCreateDir('DB', idealDir)
+    return maybeRenameExisting('DB', foundDir, idealDir)
 }
 
-// Get the dir for a Space + Type + cacheType
-async function getCacheDir( space, typeId, cacheType ) {
-    const dir = path.join( await getTypeDir(space, typeId), `.${cacheType}`)
-    return maybeCreateDir(cacheType, dir)
-}
+// // Check if a file is tracked in git 
+// function gitStatus( cwd, filename ) {
+//     let gitstatus = execFileSync('git', ['status', '--short', '--porcelain', filename], {cwd})
+//     if (gitstatus.stderr) {
+//         warn(gitstatus.stderr.toString())
+//         return null
+//     }
+//     return gitstatus.toString()
+// }
 
+// Execute a git command synchronously
+function execGitCommandSync( gitArgs, execOptions ) {
+    const gitProgram = 'git'
+    const result     = execFileSync(gitProgram, gitArgs, execOptions)
+    return result
+}
 
 //---------------------------------------------------------------------------------------------------
 // Manage caches
 //
 
+// Get the cache dir for a Type + cacheType
+function getCacheDir( space, typeId, cacheType ) {
+    const dir = path.join(getTypeDir(space, typeId), `.${cacheType}`)
+    return maybeCreateDir(cacheType, dir)
+}
+
 // Get some cached or fresh data (JSON)
 async function cachify( space, typeId, cacheType, creatorFunc, useCache=true ) {
-    const cacheDir          = await getCacheDir(space, typeId, cacheType)
+    const cacheDir          = getCacheDir(space, typeId, cacheType)
     if (options.cache && useCache) {
         // Use cached data if available
         const cacheFiles    = await fs.readdir(cacheDir)
@@ -365,7 +379,7 @@ async function cachify( space, typeId, cacheType, creatorFunc, useCache=true ) {
         const latest        = cacheFiles.filter( name => name.match(/^\d\d\d\d-\d\d-\d\d \d\d.\d\d.\d\d.*\.jsonc$/) )
             .sort().slice(-1)[0]                        // Most-recently-created cache file
         if (latest) {
-            dbg(` - reading cache:    \t${latest}`)
+            dbg(`- reading cache:    \t${latest}`)
             let content     = (await fs.readFile(path.join(cacheDir, latest))).toString()
             while (!content.match(/^\s*[[{}]/))         // Delete any leading comment lines before JSON
                 content     = content.replace(/.*[\r\n]*/, '')
@@ -379,18 +393,18 @@ async function cachify( space, typeId, cacheType, creatorFunc, useCache=true ) {
     const safeTimestamp = startTimestamp.replace(/:/g, '_')     // Windows can't handle ':' in filenames
     const cacheFilename = path.join(cacheDir, `${safeTimestamp}.jsonc`)
     const content       = `//# ${cacheFilename}\n` + JSON.stringify(obj)
-    dbg(` - saving cache:    \t${cacheFilename}`)
+    dbg(`- saving cache:    \t${cacheFilename}`)
     if (!options.fake)
-        await fs.writeFile(cacheFilename, content)
+        fss.writeFileSync(cacheFilename, content)
     return obj
 }
 
 //---------------------------------------------------------------------------------------------------
 
-// Get the Workspace dir
-async function getWorkspace( domain ) {
+// Get the Workspace dir for the Fibery domain
+function getWorkspace( domain ) {
     workspace = path.join(FIBERY, domain)
-    maybeCreateDir('workspace', workspace)
+    return maybeCreateDir('workspace', workspace)
 }
 
 // Get the list of Spaces in the Workspace
@@ -420,46 +434,47 @@ async function getSchema() {
     // dbg( Object.entries(schema.spaces).map( ([n,s]) => [ n, s['fibery/id'] ] ) )    // Dump Spaces names and id's
 }
 
-// Make a filter function to filter names of Rules/Buttons/Spaces/Types
+// Create a filter function to filter names of Rules/Buttons/Spaces/Types
 function makeFilter( pattern, field='name' ) {
     if (!pattern || pattern==='.' || pattern==='*')
         return () => true                                       // match everything
     const negate        = pattern.startsWith('-')               // Start a pattern with '-' to negate it
     if (negate) pattern = pattern.substr(1)
+
     const makeReFilter  = (pat, field) => { 
         const re        = new RegExp(pat, 'i')
         return negate   ? (obj) =>  !re.exec(typeof obj==='string' ? obj : obj[field])
                         : (obj) => !!re.exec(typeof obj==='string' ? obj : obj[field])
     }
     return pattern.startsWith('/') ?
-            makeReFilter( pattern.substr(1).replace(/\/$/, ''), field )          // Regex
+            makeReFilter( pattern.substr(1).replace(/\/$/, ''),     field )      // Regex
           : makeReFilter( `^${pattern.replace(/([*?])/g, '.$1')}$`, field )      // Glob
 }
 
-// Generate all Space names that pass the Spaces filter
-function* spaces_filtered( workspace ) {
-    const filtr = makeFilter( options.space )
+// Generate all Space names that pass the Space name filter
+function* spaces_filtered() {
+    const filtr = makeFilter( options.space )       // name filter
     yield* Object.values(spaces).filter( filtr )
 }
 
-// Generate all Type names (in the given space) that pass the Types filter
+// Generate all Type names in the given space that pass the Type name filter
 function* types_filtered( space ) {
-    if (!space?.types) return           // Some Spaces might have NO types/DBs defined
+    if (!space?.types) return            // Some Spaces might have NO types/DBs defined
     const filtr = makeFilter( options.type )
     yield* Object.values(space.types).filter( filtr )
 }
 
-// Generate all Buttons that pass the Buttons filter
+// Generate all Buttons that pass the Button name filter
 function* buttons_filtered( buttons ) {
     if (!buttons) return
-    const filtr = makeFilter( options.button )
+    const filtr = makeFilter( options.button )      // name filter
     yield* buttons.filter( b => filtr(`${b.name} =${b.id}`) )
 }
 
 // Generate all Rules that pass the Rules filter
 function* rules_filtered( rules ) {
     if (!rules) return
-    const filtr = makeFilter( options.rule )
+    const filtr = makeFilter( options.rule )        // name filter
     yield* rules.filter( r => filtr(`${r.name} =${r.id}`) )
 }
 
@@ -483,38 +498,23 @@ async function getRulesForType( space, typeId, useCache=false ) {
 async function updateButtonsForType( typeId, buttons ) {
     if (options.fake) return
     const result = await fiberyFetch(`/api/automations/buttons/for-type/${typeId}`, 'PUT', buttons)
-    debugger    // success??
+    debugger    // Check success??
 }
 
 // Update all Rule definitions for a Type
 async function updateRulesForType( typeId, rules ) {
-    if (!options.fake)
-        return fiberyFetch(`/api/automations/auto-rules/for-type/${typeId}`, 'PUT', rules)
+    if (options.fake) return
+    const result = fiberyFetch(`/api/automations/auto-rules/for-type/${typeId}`, 'PUT', rules)
+    debugger    // Check success??
 }
 
-// Make the Fibery api header (comment) for a script file
+// Generate a script's Fibery api header (comment line)
 function scriptApiHeader( automationId, actionId ) {
-     return `//.fibery SCRIPTID=${automationId} ACTIONID=${actionId}`
+     return `//.fibery SCRIPTID=${automationId} ACTIONID=${actionId}\n`
 }
 
-// function gitStatus( cwd, filename ) {
-//     let gitstatus = execFileSync('git', ['status', '--short', '--porcelain', filename], {cwd})
-//     if (gitstatus.stderr) {
-//         warn(gitstatus.stderr.toString())
-//         return null
-//     }
-//     return gitstatus.toString()
-// }
-
-// Execute a git command synchronously
-function execGitCommandSync( gitArgs, execOptions ) {
-    const gitProgram = 'git'
-    const result     = execFileSync(gitProgram, gitArgs, execOptions)
-    return result
-}
-
-// Create the git header-comment for a script file
-async function scriptGitHeader( filePath ) {
+// Generate a script's git header (block comment)
+function scriptGitHeader( filePath ) {
     if (options.nogit) return ''
     const cwd       = path.dirname(filePath), filename = path.basename(filePath)
     // const status    = gitStatus(cwd, filename)
@@ -532,31 +532,18 @@ async function scriptGitHeader( filePath ) {
         + '\n*/\n'
 }
 
-// Save a Button or Rule action script locally
-async function saveAutomationScript( automationName, typeDir, automationId, actionId, scriptsCount, script ) {
-    const apiHeader     = scriptApiHeader(automationId, actionId)
-    const scriptExt     = scriptsCount>1 ? ` ~${actionId.slice(-4)}` : ''               // To differentiate multiple scripts within the same Automation
-    let   newFile       = path.join(typeDir, `${automationName}${scriptExt}.js`)        // What the script filename SHOULD be
-    const existingFile  = await find_scriptFile_byHeader(typeDir, newFile, apiHeader)
-    newFile             = await maybeRenameExisting('script', existingFile, newFile)
-    // const gitHeader     = await scriptGitHeader(newFile)
-    dbg(`Saving script:      \t${newFile}`)
-    script = script.replace(/^\/\/.fibery\s+.*[\r\n]+/, '' )                // Delete old script headers
-    //            .replace(/\/\*.git\b[\s\S]*?\*\/\s*/)
-    // script = `${apiHeader}\n${gitHeader}\n${script}`
-    script = `${apiHeader}\n${script}`                                      // Add current headers
-    if (!options.fake)
-        await fs.writeFile(newFile, script)
-}
+const deleteScriptHeaders = (script) => script.replace(/^\/\/.fibery\s+.*[\r\n]+/, '')
+                                              .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '\n')
 
-// Find the local script filename for an automation (Button or Rule)
-async function localScriptPath( automationName, typeDir, automationId, actionId ) {
-    const apiHeader     = scriptApiHeader(automationId, actionId)
-    const scriptAction  = actionId.slice(-4)                                // To differentiate multiple scripts within the same Automation
-    let   newFile       = path.join(typeDir, `${automationName} ~${scriptAction}.js`)        // What the script filename SHOULD be
-    const existingFile  = await find_scriptFile_byHeader(typeDir, newFile, apiHeader)
-    newFile             = await maybeRenameExisting('script', existingFile, newFile)
-    return newFile
+// Save a local automation action script
+function saveLocalActionScript( automationName, typeDir, automationId, actionId, script ) {
+    const filePath   = localScriptPath(automationName, typeDir, automationId, actionId)
+    dbg(`  Saving action:      \t${filePath}`)
+    if (options.fake) return
+    const apiHeader  = scriptApiHeader(automationId, actionId)
+    const baseScript = deleteScriptHeaders(script)
+    const newScript  = `${apiHeader}\n${baseScript}`
+    fss.writeFileSync(filePath, newScript)
 }
 
 
@@ -567,38 +554,31 @@ async function pull() {
     await doSetup()
     dbg(`pull - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
 
-    for (const space of spaces_filtered(workspace)) {
+    for (const space of spaces_filtered()) {
         dbg( `Scanning space:        \t${space.name}\t"${space.id}"` )
 
         for (const type of types_filtered(space)) {
-            dbg(`Scanning DB:        \t${type['fibery/name']}\t"${type['fibery/id']}"`)
-            const typeId  = type['fibery/id']
-            const typeDir = await getTypeDir(space, typeId)
+            dbg(`Scanning DB:        \t${type['fibery/name']} \t${type['fibery/id']}`)
+            const typeId = type['fibery/id'], typeDir = getTypeDir(space, typeId)
 
             if (options.button) {
-                const buttons = await getButtonsForType(space, typeId, false)
-                for (const button of buttons_filtered(buttons)) {
-                    const scriptsCount = button.actions.filter( action => action.args.script?.value ).length  // How many script actions?
-                    dbg(`Scanning Button: \t${button.name} \t${button.id}`)
-                    // Check each Action for scripts
-                    for (const action of button.actions) {
-                        const script = action?.args?.script?.value
-                        if (script==null) continue                   // Ignore this action if it's not a script
-                        await saveAutomationScript(`BUTTON~ ${button.name}`, typeDir, button.id, action.id, scriptsCount, script)
+                for (const automation of buttons_filtered( await getButtonsForType(space, typeId, false) )) {
+                    dbg(`Scanning Button: \t${automation.name} \t${automation.id}`)
+                    // Check each action for a script
+                    for (const action of automation.actions) {
+                        if (action.args?.script)
+                            saveLocalActionScript(`BUTTON~ ${automation.name}`, typeDir, automation.id, action.id, action.args.script.value)
                     }
                 }
             }
 
             if (options.rule) {
-                const rules = await getRulesForType(space, typeId, false)
-                for (const rule of rules_filtered(rules)) {
-                    const scriptsCount = rule.actions.filter( action => action.args.script?.value ).length  // How many script actions?
-                    dbg(`Scanning Rule:   \t${rule.name} \t${rule.id}`)
-                    // Check each Action for scripts
-                    for (const action of rule.actions) {
-                        const script = action?.args?.script?.value
-                        if (script==null) continue                   // Ignore this action if it's not a script
-                        await saveAutomationScript(`RULE~ ${rule.name}`, typeDir, rule.id, action.id, scriptsCount, script)
+                for (const automation of rules_filtered( await getRulesForType(space, typeId, false) )) {
+                    dbg(`Scanning Rule:   \t${automation.name} \t${automation.id}`)
+                    // Check each action for a script
+                    for (const action of automation.actions) {
+                        if (action.args?.script)
+                            saveLocalActionScript(`RULE~ ${automation.name}`, typeDir, automation.id, action.id, action.args.script.value)
                     }
                 }
             }
@@ -614,56 +594,66 @@ async function push() {
     await doSetup()
     dbg(`push - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
 
+    // Process matching Spaces
     for (const space of spaces_filtered(workspace)) {
         dbg(    `Scanning space:     \t${space.name}\t"${space.id}"` )
-
+        
+        // Process matching Types
         for (const type of types_filtered(space)) {
             dbg(`Scanning DB:        \t${type['fibery/name']}\t"${type['fibery/id']}"`)
             const typeId  = type['fibery/id']
             const typeDir = await getTypeDir(space, typeId)
-
-            if (options.button) {
-                let   dirty   = false
-                const buttons = await getButtonsForType(space, typeId, false)
-                for (const button of buttons_filtered(buttons)) {
-                    dbg(`Scanning Button:    \t${button.name} \t${button.id}`)
-                    // const scriptsCount = button.actions.filter( action => action.args.script?.value ).length  // How many script actions exist in the automation?
-                    // if (scriptsCount==0) continue
-
-                    // Check each Action for scripts
-                    let actionNum = 0
-                    for (const action of button.actions) {
+            
+            // Update automation actions from local script files
+            function updateActions( automationType, automations ) {
+                let   dirtyCount    = 0                                 // How many actions were updated?
+                const scriptPrefix  = automationType.match(/button/i) ? 'BUTTON~ ' : 'RULE~ '
+                // Check each automation (button/rule) in the Type
+                for (const automation of automations) {
+                    dbg(`Scanning ${automationType}:    \t${automation.name} \t${automation.id}`)
+                    let actionNum   = 0
+                    // Check each action in current Automation
+                    for (const action of automation.actions) {
                         ++actionNum
-                        if (!action?.args?.script) continue                 // Ignore this action: not a script
-                        const newFile = await localScriptPath(`BUTTON~ ${button.name}`, typeDir, button.id, action.id)
-                        if (!doesPathExist(newFile)) {
-                            warn(`Local script not found: ${newFile}}`)
+                        if (!action?.args?.script) continue             // Ignore this action: not a script
+                        const scriptPath = localScriptPath(`${scriptPrefix}${automation.name}`, typeDir, automation.id, action.id)
+                        if (!doesPathExist(scriptPath)) {
+                            warn(`Local script file not found: ${scriptPath}} -- use \`${thisScriptName} pull\` to get current script definitions from Fibery`)
                             continue
                         }
-                        let script          = (await fs.readFile(newFile)).toString()
-                        script              = script.replace(/^\/\/.fibery\s+.*[\r\n]+/, '' )                // Delete old script headers
-                                                    .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '')
-                        const apiHeader     = scriptApiHeader(button.id, action.id)
-                        const gitHeader     = await scriptGitHeader(newFile)
-                        script              = `${apiHeader}\n${gitHeader}\n${script}`                        // Add current headers
-                        action.args.script.value = script               // Update the automation action with the local script
-                        dbg(` - pushing script:    \t${newFile}`)
-                        dirty = true
+                        const baseScript = deleteScriptHeaders( fss.readFileSync(scriptPath).toString() )
+                        const apiHeader  = scriptApiHeader(automation.id, action.id)
+                        const gitHeader  = scriptGitHeader(scriptPath)
+                        const newScript  = `${apiHeader}${gitHeader}\n${baseScript}`                 // Add current headers
+                        action.args.script.value = newScript               // Update the automation action with the local script
+                        dbg(`- pushing action:    \t${scriptPath}`)
+                        ++dirtyCount
                     }
                 }
-                if (dirty) {
-                    // Save updated automations to Fibery
-                    log(`Pushing Button definitions for [${space.name}/${type.name}]`)
+                return dirtyCount
+            }
+
+            if (options.button) {
+                // Process all Buttons in current Type
+                const buttons = await getButtonsForType(space, typeId, false)
+                if (updateActions('button', buttons)) {
+                    log(`Pushing Button actions for DB [${space.name}/${type.name}]`)
                     await updateButtonsForType(typeId, buttons)
                 }
                 else
                     dbg(` - no actions to update for [${space.name}/${type.name}]`)
             }
 
-            // if (options.rule) {
-            //     const rules = await getRulesForType(space, typeId, false)
-            //     for (const rule of rules_filtered(rules)) {
-
+            if (options.rule) {
+                // Process all Rules in current Type
+                const rules = await getRulesForType(space, typeId, false)
+                if (updateActions('rule', rules)) {
+                    log(`Pushing Rule actions for DB [${space.name}/${type.name}]`)
+                    await updateRulesForType(typeId, rules)
+                }
+                else
+                    dbg(` - no actions to update for [${space.name}/${type.name}]`)
+            }
         }
     }
 }
@@ -727,8 +717,6 @@ async function main() {
         error(err)
     }
 }
-
-// module.exports = { }
 
 main()
 .catch( err => error(err) )
