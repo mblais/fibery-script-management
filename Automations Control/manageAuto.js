@@ -65,7 +65,7 @@ const FIBERY_DOMAIN = process.env.FIBERY_DOMAIN
 const FIBERY        = process.env.FIBERY
 debug               = debug || options.debug
 
-async function doSetup() {
+async function doSetup( noCache=false ) {
     // Validate inputs
     assert.ok(FIBERY, 'FIBERY env var should hold the path to the dir for Fibery domains')
     assert.ok(FIBERY_DOMAIN, `Fibery workspace domain must be defined either by FIBERY_DOMAIN env var or --domain arg`)
@@ -83,8 +83,8 @@ async function doSetup() {
     assert.ok(process.env.FIBERY_API_KEY, `FIBERY_API_KEY env var is not defined for workspace "${FIBERY_DOMAIN}"`)
     
     getWorkspace(FIBERY_DOMAIN)
-    await getSpaces(workspace)
-    await getSchema(workspace)
+    await getSpaces(workspace, noCache)
+    await getSchema(workspace, noCache)
 }
 
 // Dump Fibery env vars:
@@ -92,13 +92,6 @@ async function doSetup() {
 
 function help( cmd ) {
     switch (cmd || '') {
-
-        case 'list':
-            warn(`
-${thisScriptName} list
-    List automation definitions
-`)
-            break
 
         case 'pull':
             warn(`
@@ -125,12 +118,11 @@ ${thisScriptName} purge
             warn(`
 ${thisScriptName} - Manage Fibery Automations scripts remotely
 
-Usage:  ${thisScriptName}  [ help {cmd} | list | pull | push | purge ]  [ options... ]
+Usage:  ${thisScriptName}  [ help {cmd} | pull | push | purge ]  [ options... ]
 
 COMMANDS:
 
     help [cmd]          Show help, optionally for a specific command
-    list                List Button and Rules
     pull                Get  Button and Rule definitions from Fibery to local dirs
     push                Push local Button and Rule definitions to Fibery
     purge {days}        Delete all cache entries older than {days}
@@ -238,15 +230,23 @@ function execFileSync( cmd, args, options ) {
     }
 }
 
-// Create a dir if it doesn't exist
-function maybeCreateDir( type, dir ) {
+// Create a token file name for a space/type dir
+const tokenFileName = (tokenType, id) => `.${id}.${tokenType}`
+
+// Create a dir if it doesn't exist (maybe)
+function maybeCreateDir( type, dir, tokenFile=null ) {
     if (!doesPathExist(dir)) {
         if (!options.init)
             error(`Missing ${type} dir "${dir}" - Use the \`--init\` option to create it automatically`)
         warn(`Creating ${type} dir: \t${dir}`)
-        if (!options.fake)
+        if (!options.fake) {
             fss.mkdirSync(dir, {recursive: true})
-    }    
+        }
+    }
+    if (tokenFile) {
+        const tokenPath = path.join(dir, tokenFile)
+        fss.writeFileSync(tokenPath, '')
+    }
     return dir
 }    
 
@@ -278,23 +278,21 @@ function testFileContentMatch( filePath, pattern ) {
 }
 
 // Find an existing Space dir by its Fibery Id
-function findSpaceDir_byId( spaceId ) {
+function findSpaceDir_byId( tokenFile ) {
     const allSpaces = path.join(FIBERY, FIBERY_DOMAIN)
-    const token     = `.${spaceId}.space`      // The space should contain this token file
     for (const fname of readdirSync(allSpaces)) {
         const dir   = path.join(allSpaces, fname)
-        if (doesDirContain(dir, token))
+        if (doesDirContain(dir, tokenFile))
             return dir
     }
     return null
 }
 
 // Find an existing Type dir by its Fibery Id
-function findTypeDir_byId( spaceDir, typeId ) {
-    const token     = `.${typeId}.type`      // The space should contain this token file
+function findTypeDir_byId( spaceDir, tokenFile ) {
     for (const fname of readdirSync(spaceDir)) {
         const dir   = path.join(spaceDir, fname)
-        if (doesDirContain(dir, token))
+        if (doesDirContain(dir, tokenFile))
             return dir
     }
     return null
@@ -328,10 +326,11 @@ function localScriptPath( automationName, typeDir, automationId, actionId ) {
 // Get the dir for the given Space
 function getSpaceDir( space=null ) {
     if (!space) return path.join(FIBERY, FIBERY_DOMAIN, '.fibery')
-    let dir          = path.join(FIBERY, FIBERY_DOMAIN, `SPACE~ ${space.name}`)         // This is what the dirName should be
-    const foundDir   = findSpaceDir_byId(space.id)
-    if ( !foundDir )  return maybeCreateDir('space', dir)
-    return maybeRenameExisting('space', foundDir, dir)
+    const tokenFile  = tokenFileName('space', space.id)
+    const idealDir   = path.join(FIBERY, FIBERY_DOMAIN, `SPACE~ ${space.name}`)         // This is what the dirName should be
+    const foundDir   = findSpaceDir_byId(tokenFile)
+    if ( !foundDir )  return maybeCreateDir('space', idealDir, tokenFile)
+    return maybeRenameExisting('space', foundDir, idealDir)
 }
 
 // Get the dir for the given Type
@@ -339,9 +338,10 @@ function getTypeDir( space, typeId ) {
     const spaceDir   = getSpaceDir(space)
     if (!typeId) return spaceDir
     const typeName   = typeName_from_typeId(typeId)
+    const tokenFile  = tokenFileName('db', typeId)
     const idealDir   = path.join(spaceDir, `DB~ ${typeName}`)                           // This is what the dirName should be
-    const foundDir   = findTypeDir_byId(spaceDir, typeId)
-    if ( !foundDir ) return maybeCreateDir('DB', idealDir)
+    const foundDir   = findTypeDir_byId(spaceDir, tokenFile)
+    if ( !foundDir ) return maybeCreateDir('DB', idealDir, tokenFile)
     return maybeRenameExisting('DB', foundDir, idealDir)
 }
 
@@ -373,9 +373,9 @@ function getCacheDir( space, typeId, cacheType ) {
 }
 
 // Get some cached or fresh data (JSON)
-async function cachify( space, typeId, cacheType, creatorFunc, useCache=true ) {
+async function cachify( space, typeId, cacheType, creatorFunc, noCache=false ) {
     const cacheDir          = getCacheDir(space, typeId, cacheType)
-    if (options.cache && useCache) {
+    if (options.cache && !noCache) {
         // Use cached data if available
         const cacheFiles    = await fs.readdir(cacheDir)
         // Cache filenames are a timestamp of when they were created
@@ -411,7 +411,7 @@ function getWorkspace( domain ) {
 }
 
 // Get the list of Spaces in the Workspace
-async function getSpaces() {
+async function getSpaces( noCache=false ) {
     spaces = await cachify(null, null, 'spaces', async() => {
         const data = await fiberyFetch( '/api/commands?reason=preload&command=fibery.app/get-available-apps', 'POST', '[{"command":"fibery.app/get-available-apps","args":{}}]' )
         assert.ok(data?.length > 0, `Could not read spaces for ${FIBERY_DOMAIN} - check your FIBERY_API_KEY env var`)
@@ -423,16 +423,16 @@ async function getSpaces() {
         }
         assert.ok(Object.keys(result)?.length > 0, `Did not fetch any spaces from ${FIBERY_DOMAIN}`)
         return result
-    })
+    }, noCache)
 }
 
 // Get the Workspace schema
-async function getSchema() {
+async function getSchema( noCache=false ) {
     const data = await cachify(null, null, 'schema', async() => {
         const data = await fiberyFetch( '/api/commands', 'POST', '[{"command":"fibery.schema/query"}]'  )
         assert.ok(data?.[0]?.success, `Error retrieving schema for ${FIBERY_DOMAIN} - check your FIBERY_API_KEY?`)
         return data
-    })
+    }, noCache)
     schema = new FiberyWorkspaceSchema( data[0].result )
     // dbg( Object.entries(schema.spaces).map( ([n,s]) => [ n, s['fibery/id'] ] ) )    // Dump Spaces names and id's
 }
@@ -478,17 +478,17 @@ function* rules_filtered( rules ) {
 }
 
 // Get all Button definitions for a Type
-async function getButtonsForType( space, typeId, useCache=false ) {
+async function getButtonsForType( space, typeId, noCache=false ) {
     const result = await cachify( space, typeId, 'buttons',
-        async() => fiberyFetch(`/api/automations/buttons/for-type/${typeId}`, 'GET'), useCache )
+        async() => fiberyFetch(`/api/automations/buttons/for-type/${typeId}`, 'GET'), noCache )
     assert.ok(result instanceof Array)
     return result
 }
 
 // Get all Rule definitions for a Type
-async function getRulesForType( space, typeId, useCache=false ) {
+async function getRulesForType( space, typeId, noCache=false ) {
     const result = await cachify( space, typeId, 'rules',
-        async() => fiberyFetch(`/api/automations/auto-rules/for-type/${typeId}`, 'GET'), useCache )
+        async() => fiberyFetch(`/api/automations/auto-rules/for-type/${typeId}`, 'GET'), noCache )
     assert.ok(result instanceof Array)
     return result
 }
@@ -647,21 +647,44 @@ async function push() {
 }
 
 //---------------------------------------------------------------------------------------------------
-// List: List Button/Rule automation scripts
-//
-async function list() {
-    await doSetup()
-    dbg(`list - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
-    debugger
-}
-
-//---------------------------------------------------------------------------------------------------
-// Purge: Delete cache entries older than {days}
+// Purge: Delete cache files older than {days}
 //
 async function purge() {
-    await doSetup()
+    await doSetup(false)
     dbg(`purge - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
-    debugger
+    const minAgeInDays  = parseInt(positionals.shift())
+    if (!(minAgeInDays >= 0)) error(`"purge" requires the parameter: maximum age in days to keep`)
+    // const incompatibleOptions = `|button|rule|cache|`
+    // for (const opt in options)
+    //     if (incompatibleOptions.indexOf(`|${opt}|`) >= 0) error(`Option "${opt}" is incompatible with "purge"`)
+    const MS_PER_DAY = 24 * 60 * 60 * 1000
+    const now = new Date()
+
+    function purgeCacheFiles( dir ) {
+        // Delete cache files in dir older than cutoff
+        for (fileName of fss.readdirSync(dir)) {
+            const m = fileName.match( /(?<year>\d\d\d\d)-(?<month>\d\d)-(?<day>\d\d) (?<hours>\d\d).(?<minutes>\d\d).(?<seconds>\d\d)\.(?<ms>\d+)\.jsonc$/ )
+            if (!m) continue
+            const {year, month, day, hours, minutes, seconds, ms} = m.groups
+            const date = new Date()
+            date.setFullYear(year, month-1, day)
+            date.setHours(hours, minutes, seconds, ms)
+            const ageInDays = (now - date) / MS_PER_DAY
+            if (ageInDays < minAgeInDays) continue
+            const fullPath = path.join(dir, fileName)
+            fss.unlinkSync(fullPath)
+        }
+    }
+
+    purgeCacheFiles( path.join(FIBERY, FIBERY_DOMAIN, '.fibery', '.schema') )
+    purgeCacheFiles( path.join(FIBERY, FIBERY_DOMAIN, '.fibery', '.spaces') )
+    for (const space of spaces_filtered()) {
+        for (const type of types_filtered(space)) {
+            const typeDir = getTypeDir(space, type['fibery/id'])
+            purgeCacheFiles( typeDir, '.buttons')
+            purgeCacheFiles( typeDir, '.rules')
+        }
+    }
 }
 
 //---------------------------------------------------------------------------------------------------
