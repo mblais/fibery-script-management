@@ -15,7 +15,8 @@ const { dir } = require( 'node:console' )
 
 const {log, warn}                   = console
 let   debug                         = 1
-const dbg = (...args) => { if (debug) log(...args) }
+const dbg                           = (...args) => { if (debug) log(...args) }
+const debugBreak                    = () => { if (options.debug) debugger }
 
 //---------------------------------------------------------------------------------------------------
 
@@ -25,16 +26,16 @@ const   thisScriptName              = path.basename( process.argv[1] ).replace(/
 
 //---------------------------------------------------------------------------------------------------
 
-const stringify = (arg) => JSON.stringify(arg,null,2)
-const timestamp = ( d=null ) => (d ?? new Date()).toLocaleString('sv', {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric', fractionalSecondDigits: 3}).replace(',', '.')
-const startTimestamp = timestamp()
+const stringify         = (arg) => JSON.stringify(arg,null,2)
+const timestamp         = ( d=null ) => (d ?? new Date()).toLocaleString('sv', {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric', fractionalSecondDigits: 3}).replace(',', '.')
+const startTimestamp    = timestamp()
 
 function error(...args) {
     // if (typeof args[0]==='string') args[0] = `${thisScriptName}: ${args[0]}`
     // if (args[0] instanceof Error)
     console.error(...args)
     if (!returnCode) returnCode = 1
-    debugger
+    debugBreak()
 }
 
 const doesPathExist  = (fpath)                => { try{ return fss.statSync(fpath) } catch(e){ return null } }  // SYNCHRONOUS
@@ -176,8 +177,10 @@ async function fiberyFetch( url, method, data=null ) {
         },
         ...body
     })
-    if (response.status!==200)
+    if (response.status!==200) {
+        debugBreak()
         throw Error(`${response.status}: ${response.statusText}\nhttps://${FIBERY_DOMAIN}${url}`)
+    }
     return response.json()
 }
 
@@ -240,9 +243,9 @@ function maybeCreateDir( type, dir ) {
     if (!doesPathExist(dir)) {
         if (!options.init)
             error(`Missing ${type} dir "${dir}" - Use the \`--init\` option to create it automatically`)
-        warn(`Creating ${type} dir: "${dir}"`)
+        warn(`Creating ${type} dir: \t${dir}`)
         if (!options.fake)
-            fss.mkdir(dir, {recursive: true})
+            fss.mkdirSync(dir, {recursive: true})
     }    
     return dir
 }    
@@ -453,29 +456,25 @@ function makeFilter( pattern, field='name' ) {
 
 // Generate all Space names that pass the Space name filter
 function* spaces_filtered() {
-    const filtr = makeFilter( options.space )       // name filter
-    yield* Object.values(spaces).filter( filtr )
+    yield* Object.values(spaces).filter( makeFilter(options.space) )
 }
 
 // Generate all Type names in the given space that pass the Type name filter
 function* types_filtered( space ) {
     if (!space?.types) return            // Some Spaces might have NO types/DBs defined
-    const filtr = makeFilter( options.type )
-    yield* Object.values(space.types).filter( filtr )
+    yield* Object.values(space.types).filter( makeFilter(options.type) )
 }
 
 // Generate all Buttons that pass the Button name filter
 function* buttons_filtered( buttons ) {
     if (!buttons) return
-    const filtr = makeFilter( options.button )      // name filter
-    yield* buttons.filter( b => filtr(`${b.name} =${b.id}`) )
+    yield* buttons.filter( makeFilter(options.button) )
 }
 
 // Generate all Rules that pass the Rules filter
 function* rules_filtered( rules ) {
     if (!rules) return
-    const filtr = makeFilter( options.rule )        // name filter
-    yield* rules.filter( r => filtr(`${r.name} =${r.id}`) )
+    yield* rules.filter( makeFilter(options.rule) )
 }
 
 // Get all Button definitions for a Type
@@ -494,18 +493,14 @@ async function getRulesForType( space, typeId, useCache=false ) {
     return result
 }
 
-// Update all Button definitions for a Type
-async function updateButtonsForType( typeId, buttons ) {
+// Update an automation in Fibery
+async function updateAutomation( automationType, automation ) {
+    const auto  = automationType==='rule'   ? 'auto-rules' :
+                  automationType==='button' ? 'buttons'    : null
+    const {name, triggers, actions, id} = automation
+    const data  = {name, triggers, actions}
     if (options.fake) return
-    const result = await fiberyFetch(`/api/automations/buttons/for-type/${typeId}`, 'PUT', buttons)
-    debugger    // Check success??
-}
-
-// Update all Rule definitions for a Type
-async function updateRulesForType( typeId, rules ) {
-    if (options.fake) return
-    const result = fiberyFetch(`/api/automations/auto-rules/for-type/${typeId}`, 'PUT', rules)
-    debugger    // Check success??
+    await fiberyFetch(`/api/automations/${auto}/${id}`, 'PUT', JSON.stringify(data))
 }
 
 // Generate a script's Fibery api header (comment line)
@@ -532,7 +527,7 @@ function scriptGitHeader( filePath ) {
         + '\n*/\n'
 }
 
-const deleteScriptHeaders = (script) => script.replace(/^\/\/.fibery\s+.*[\r\n]+/, '')
+const deleteScriptHeaders = (script) => script.replace(/\/\/.fibery\s+.*[\r\n]+/, '')
                                               .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '\n')
 
 // Save a local automation action script
@@ -594,25 +589,25 @@ async function push() {
     await doSetup()
     dbg(`push - options: ${stringify(options)},\npositionals: ${stringify(positionals)}`)
 
-    // Process matching Spaces
+    // Process all matching Spaces
     for (const space of spaces_filtered(workspace)) {
         dbg(    `Scanning space:     \t${space.name}\t"${space.id}"` )
         
-        // Process matching Types
+        // Process all matching Types
         for (const type of types_filtered(space)) {
             dbg(`Scanning DB:        \t${type['fibery/name']}\t"${type['fibery/id']}"`)
             const typeId  = type['fibery/id']
             const typeDir = await getTypeDir(space, typeId)
             
             // Update automation actions from local script files
-            function updateActions( automationType, automations ) {
+            async function updateActions( automationType, automations ) {
                 let   dirtyCount    = 0                                 // How many actions were updated?
                 const scriptPrefix  = automationType.match(/button/i) ? 'BUTTON~ ' : 'RULE~ '
-                // Check each automation (button/rule) in the Type
+                // Check each automation (Button/Rule) in the Type
                 for (const automation of automations) {
                     dbg(`Scanning ${automationType}:    \t${automation.name} \t${automation.id}`)
                     let actionNum   = 0
-                    // Check each action in current Automation
+                    // Check each action in the automation
                     for (const action of automation.actions) {
                         ++actionNum
                         if (!action?.args?.script) continue             // Ignore this action: not a script
@@ -629,30 +624,23 @@ async function push() {
                         dbg(`- pushing action:    \t${scriptPath}`)
                         ++dirtyCount
                     }
+                    if (dirtyCount>0)
+                        await updateAutomation(automationType, automation)
+                    else
+                        dbg(` - no actions to update for [${space.name}/${type.name}] ${automation.name}`)
                 }
-                return dirtyCount
             }
 
             if (options.button) {
                 // Process all Buttons in current Type
                 const buttons = await getButtonsForType(space, typeId, false)
-                if (updateActions('button', buttons)) {
-                    log(`Pushing Button actions for DB [${space.name}/${type.name}]`)
-                    await updateButtonsForType(typeId, buttons)
-                }
-                else
-                    dbg(` - no actions to update for [${space.name}/${type.name}]`)
+                await updateActions('button', buttons_filtered(buttons))
             }
 
             if (options.rule) {
                 // Process all Rules in current Type
                 const rules = await getRulesForType(space, typeId, false)
-                if (updateActions('rule', rules)) {
-                    log(`Pushing Rule actions for DB [${space.name}/${type.name}]`)
-                    await updateRulesForType(typeId, rules)
-                }
-                else
-                    dbg(` - no actions to update for [${space.name}/${type.name}]`)
+                await updateActions('rule', rules_filtered(rules))
             }
         }
     }
@@ -720,4 +708,7 @@ async function main() {
 
 main()
 .catch( err => error(err) )
-.finally( () => { debugger; process.exit(returnCode) } )
+.finally( () => {
+    // debugBreak()
+    process.exit(returnCode)
+})
