@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 # Set (and return) Fibery env vars for a particular Fibery domain (and some misc functions)
 # If the first arg is "-0" then output lines will be termianted with \0 instead of \n
 # Set the FIBERY_DOMAIN env var, or pass its value as an arg

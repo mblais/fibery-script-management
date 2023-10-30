@@ -1,0 +1,11 @@
+{
+  "name": "automations-control",
+  "version": "1.0.0",
+  "description": "Fibery automations remote management",
+  "main": "fibscripts.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "author": "Matt Blais <rasha808@gmail.com>",
+  "license": "ISC"
+}
