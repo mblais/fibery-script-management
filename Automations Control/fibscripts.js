@@ -248,12 +248,16 @@ EXAMPLES
     returnCode = 1
 }
 
+// Join all non-null args with delimiter
+const joinNonNull = (delimiter, ...args) => args.reduce( (accum, arg) => accum + (
+    arg==null ? '' : arg + delimiter), '')
+
 // Fibery API call
 async function fiberyFetch( url, method, data=null ) {
     let   response
     const body = data==null ? null : { body: (data instanceof Object ? JSON.stringify(data) : data) }
     try {                      
-        dbg(`fetch:              \t${url}` + (typeof data==='string' ? `\t"${body}"` : ''))
+        dbg(`fiberyFetch:        \t${url}` + (typeof data==='string' ? `\t"${data}"` : ''))
         response = await fetch( `https://${FIBERY_DOMAIN}${url}`, {
             method,
             headers: {
@@ -266,7 +270,7 @@ async function fiberyFetch( url, method, data=null ) {
             error(`${response.status}: ${response.statusText}\nhttps://${FIBERY_DOMAIN}${url}`)
         return response.json()
     } catch (err) {
-        error(`${response.status}: ${response.statusText}\nhttps://${FIBERY_DOMAIN}${url}`)
+        error(`${joinNonNull('\n', err?.cause, response?.status, response?.statusText)}\nhttps://${FIBERY_DOMAIN}${url}`)
     }
 }
 
@@ -365,11 +369,9 @@ function maybeRenameExisting( typeDescription, existingPath, idealPath ) {
     if (!options.nogit) {
         // Try renaming with `git mv`
         const gitmv = execGitCommandSync(['mv', existingPath, idealPath], {cwd: workspace})
-        if (!gitmv.message) {
-            debugger                            // check success case
+        if (gitmv==='')
             return idealPath                    // Success
-        }
-        if (!gitmv.message.match('not under version control')) {
+        if (!gitmv?.message?.match('not under version control')) {
             warn('git mv: ' + gitmv.message)    // git error
             return existingPath
         }
@@ -402,8 +404,8 @@ function find_scriptFile_byHeader( typeDir, idealFilePath, header ) {
     return null
 }
 
-// Find the local script file for an automation
-function localScriptPath( automationType, automationName, typeDir, automationId, actionId ) {
+// Find the local *.js script file path for an action
+function localActionScriptPath( typeDir, automationType, automationName, automationId, actionId ) {
     const idHeader      = scriptIdHeader(automationId, actionId)
     const scriptAction  = actionId.slice(-4)                                // Differentiates multiple scripts in the same Automation
     const fileName      = `${automationType.toUpperCase()}~ ${automationName} ~${scriptAction}.js`   // This is what the script filename should be
@@ -585,7 +587,7 @@ async function getRulesForType( space, typeId, noCache=false ) {
     return result
 }
 
-// Update an automation in Fibery (Button or Rule)
+// Update an automation (Button or Rule) in the Fibery workspace
 async function updateAutomation( automationType, automation ) {
     const auto  = automationType==='rule'   ? 'auto-rules' :
                   automationType==='button' ? 'buttons'    : null
@@ -620,13 +622,14 @@ const deleteScriptHeaders = (script) => script.replace(/\/\/.fibery\s+.*[\r\n]+/
                                               .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '\n')
 
 // Save an automation action script locally
-function saveLocalActionScript( automationType, automationName, typeDir, automationId, actionId, script ) {
-    const filePath   = localScriptPath(automationType, automationName, actionId, typeDir, automationId, actionId)
+function saveLocalActionScript( typeDir, automationType, automation, action ) {
+    const script     = action.args.script.value
+    const filePath   = localActionScriptPath(typeDir, automationType, automation.name, automation.id, action.id)
     dbg(`Saving   action:    \t${filePath}`)
     if (options.fake) return
-    const apiHeader  = scriptIdHeader(automationId, actionId)
-    const baseScript = deleteScriptHeaders(script)
-    const newScript  = `${apiHeader}\n${baseScript}`
+    const apiHeader  = scriptIdHeader(automation.id, action.id)
+    const bareScript = deleteScriptHeaders(script)
+    const newScript  = `${apiHeader}\n${bareScript}`
     fs.writeFileSync(filePath, newScript)
 }
 
@@ -652,7 +655,7 @@ async function pull() {
                     for (const action of automation.actions) {
                         if (action.args?.script) {
                             ++actionsCount
-                            saveLocalActionScript(automationType, automation.name, typeDir, automation.id, action.id, action.args.script.value)
+                            saveLocalActionScript(typeDir, automationType, automation, action)
                         }
                     }
                 }
@@ -700,20 +703,21 @@ async function push() {
                     for (const action of automation.actions) {
                         ++actionNum
                         if (!action?.args?.script) continue             // Ignore this action: not a script
-                        const scriptPath = localScriptPath(automationType, automation.name, typeDir, automation.id, action.id)
+                        const scriptPath = localActionScriptPath(typeDir, automationType, automation.name, automation.id, action.id)
                         if (!doesPathExist(scriptPath)) {
                             warn(`Local script file not found: ${scriptPath}} -- use \`${thisScriptName} pull\` to get current script definitions from Fibery`)
                             dirtyCount  = 0                             // Don't update any actions in this automation
                             break
                         }
-                        const baseScript = deleteScriptHeaders( fs.readFileSync(scriptPath).toString() )
+                        const bareScript = deleteScriptHeaders( fs.readFileSync(scriptPath).toString() )
                         const apiHeader  = scriptIdHeader(automation.id, action.id)
                         const gitHeader  = scriptGitHeader(scriptPath)
-                        const newScript  = `${apiHeader}${gitHeader}\n${baseScript}`    // Add script headers
+                        const newScript  = `${apiHeader}${gitHeader}\n${bareScript}`    // Add script headers
                         action.args.script.value = newScript            // Update the automation action with the local script
                         dbg(`pushing  action:   \t${scriptPath}`)
                         ++dirtyCount
                     }
+                    // Update all actions in this automation
                     if (dirtyCount>0)
                         await updateAutomation(automationType, automation)
                     else

@@ -4,9 +4,8 @@
 # Set the FIBERY_DOMAIN env var, or pass its value as an arg
 
 declare format='%s=%s\n'
-[[ $1 = '-0' ]] && { shift; format='%s=%s\0'; }
-declare -x FIBERY_DOMAIN=${1:-$FIBERY_DOMAIN}
-set -e
+[[ $1 = '-0'        ]] && { format='%s=%s\0'; shift; }
+[[ $1 = *.fibery.io ]] && { declare -x FIBERY_DOMAIN=$1; shift; }
 
 case $FIBERY_DOMAIN in
     'jrp.fibery.io') 
@@ -16,7 +15,7 @@ case $FIBERY_DOMAIN in
         declare -x FIBERY_API_KEY='e3f705b1.5d343402dae27d46f53965264d009909ce6'
         ;;
     *)
-        : "${Unknown_FIBERY_DOMAIN?\"$FIBERY_DOMAIN\"}"
+        echo "${BASH_SOURCE##*/}: FIBERY_DOMAIN is not defined" >&2; return 2
 esac
 
 # Misc functions: Escape a graphQL query (JSON) string for curl
@@ -24,7 +23,6 @@ escape()   { perl -e '$_=do{local $/; <STDIN>}; s/\t/\\t/g; s/"/\\"/g; s/\n/\\n/
 unescape() { sed 's/\\t/\t/g; s/\\"/"/g; s/\\r//g; s/\\n/\n/g; s/\\\\/\\/g'; }
 
 # Echo FIBERY env vars
-
 for var in FIBERY_DOMAIN FIBERY_API_KEY; do
     declare value=${!var}
     printf "$format" "$var" "$value"

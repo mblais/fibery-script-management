@@ -51,7 +51,7 @@ curl --silent "${args[@]}"
 
 
 # Get all Automation Rules definitions for a Type/DB
-declare typeId='138ad153-99a9-4048-bce3-a0eb421d3866'
+declare typeId='909144fc-bcb1-4725-8488-25943a2aa40a'
 declare -a args=(
     "https://${FIBERY_DOMAIN:?}/api/automations/auto-rules/for-type/${typeId:?}"
     -H "Authorization: Token ${FIBERY_API_KEY:?}"
