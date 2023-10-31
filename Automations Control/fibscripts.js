@@ -2,7 +2,8 @@
 // fibscripts.js - Manage Fibery Automations remotely
 //---------------------------------------------------------------------------------------------------
 //TODO:
-// - restore automations from old cache file
+// - Restore automations from old cache file
+// - Report orphaned local scripts no longer associated with a Workspace action
 
 const fs                = require('node:fs')                // Synchronous
 const path              = require('node:path')
@@ -547,9 +548,10 @@ function makeFilter( pattern, field='name' ) {
 
 // Generate all Spaces that pass the Space name filter
 function* spaces_filtered() {
+    const filtr = makeFilter(options.space)
     yield* Object.values(spaces)
-        .filter( makeFilter(options.space) )
-        .sort(  (a,b) => a.name.localeCompare(b.name) )
+        .filter( (space) => space.name!='Files' && filtr(space) )
+        .sort(     (a,b) => a.name.localeCompare(b.name) )
 }
 
 // Generate all Types in the given space that pass the Type name filter
