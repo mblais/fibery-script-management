@@ -52,10 +52,10 @@ const doesDirContain    = (dirPath, fileName)   => doesPathExist(path.join(dirPa
 // Parse command line options
 const commandLineOptions = {
     domain:         { type: 'string',   short: 'd',                 },
-    space:          { type: 'string',   short: 's',  default: '*'   },
-    type:           { type: 'string',   short: 't',  default: '*'   },
-    button:         { type: 'string',   short: 'b',  default: '*'   },
-    rule:           { type: 'string',   short: 'r',  default: '*'   },
+    space:          { type: 'string',   short: 's',  default: '*'   },  // default: match everything
+    type:           { type: 'string',   short: 't',  default: '*'   },  // default: match everything
+    button:         { type: 'string',   short: 'b',  default: ''    },  // default: match nothing
+    rule:           { type: 'string',   short: 'r',  default: ''    },  // default: match nothing
     cache:          { type: 'boolean',  short: 'c',  default: false },
     nogit:          { type: 'boolean',  short: 'g',  default: false },
     fake:           { type: 'boolean',  short: 'f',  default: false },
@@ -195,15 +195,17 @@ BASIC OPERATION
 
     Run \`${thisScriptName} push\` to push local *.js script files back to the Fibery workspace. Comments are inserted at the top of each script for identification and git info.
 
-    The options \`--space\` \`--type\` \`--button\` and \`--rule\` define name filters that restrict which specific Fibery elements will be affected by a push/pull/purge command.
+    The options \`--space\` \`--type\` \`--button\` and \`--rule\` define name filters that define which specific Fibery elements will be processed by a push/pull/purge command.
 
 FILTERS:
 
-    Filters are used to limit the scope of a program operation to certain Spaces/DBs/Buttons/Rules.
+    Filters are used to define the scope of a program operation to certain Spaces/DBs/Buttons/Rules.
 
     Filters are glob-like by default, or regex if preceded by '/' (trailing slash not required). Any filter is negated if the first character is '!'. Filters are always case-insensitive.
 
-    If no filter is specified for a particular category (Space/DB/Button/Rule), that category matches everything.
+    If no filter is specified for a Space/DB, all Spaces/DBs will be processed.
+    
+    If no filter is specified for a Button/Rule, NONE will be processed. So you must specify either the \`--button\` or \`--rule\` filter (or both) in order for any automations to be processed.
     
     Only one filter can be defined for each category. All supplied filters must match an item for it to be processed.
 
@@ -253,12 +255,13 @@ const joinNonNull = (delimiter, ...args) => args.reduce( (accum, arg) => accum +
     arg==null ? '' : arg + delimiter), '')
 
 // Fibery API call
-async function fiberyFetch( url, method, data=null ) {
+async function fiberyFetch( address, method, data=null ) {
+    const url       = `https://${FIBERY_DOMAIN}${address}`
+    const body      = data==null ? null : { body: data }
     let   response
-    const body = data==null ? null : { body: (data instanceof Object ? JSON.stringify(data) : data) }
     try {                      
-        dbg(`fiberyFetch:        \t${url}` + (typeof data==='string' ? `\t"${data}"` : ''))
-        response = await fetch( `https://${FIBERY_DOMAIN}${url}`, {
+        dbg(`fiberyFetch:        \t${url}  \t${typeof data==='string' ? data : JSON.stringify(data)}`)
+        response    = await fetch(url, {
             method,
             headers: {
                 'Content-Type':  'application/json; charset=utf-8',
@@ -266,11 +269,11 @@ async function fiberyFetch( url, method, data=null ) {
             },
             ...body
         })
-        if (response.status!==200)
-            error(`${response.status}: ${response.statusText}\nhttps://${FIBERY_DOMAIN}${url}`)
+        if (response?.status!==200)
+            error(`${response?.status}: ${response?.statusText}\n${url}`)
         return response.json()
     } catch (err) {
-        error(`${joinNonNull('\n', err?.cause, response?.status, response?.statusText)}\nhttps://${FIBERY_DOMAIN}${url}`)
+        error(`${joinNonNull('\n', err?.cause, response?.status, response?.statusText)}\n${url}`)
     }
 }
 
@@ -482,7 +485,7 @@ async function cachify( space, typeId, cacheType, creatorFunc, noCache=false ) {
     const timestamp     = startTimestamp.replace(/:/g, '_')     // Windows can't handle ':' in filenames
     const cacheFilename = path.join(cacheDir, `${timestamp}.jsonc`)
     const content       = `//# ${cacheFilename}\n` + JSON.stringify(obj)
-    dbg(`saving cache:    \t${path.join(cacheDir, cacheFilename)}`)
+    dbg(`saving   cache:    \t${path.join(cacheDir, cacheFilename)}`)
     if (!options.fake)
         fs.writeFileSync(cacheFilename, content)
     return obj
@@ -525,7 +528,9 @@ async function getSpaces( noCache=false ) {
 
 // Create a filter function for names of Rules/Buttons/Spaces/Types
 function makeFilter( pattern, field='name' ) {
-    if (!pattern || pattern==='.' || pattern==='*')
+    if (!pattern)
+        return            () => false
+    if (pattern==='.' || pattern==='*')
         return            () => true                            // Match everything
     const negate        = pattern.startsWith('!')               // Start a pattern with '!' to negate it
     if (negate) pattern = pattern.substr(1)
@@ -589,8 +594,9 @@ async function getRulesForType( space, typeId, noCache=false ) {
 
 // Update an automation (Button or Rule) in the Fibery workspace
 async function updateAutomation( automationType, automation ) {
-    const auto  = automationType==='rule'   ? 'auto-rules' :
-                  automationType==='button' ? 'buttons'    : null
+    const auto  = automationType.match(/rule/i)   ? 'auto-rules' :
+                  automationType.match(/button/i) ? 'buttons'    :
+                  assert.ok(false)
     const {name, triggers, actions, id} = automation
     const data  = {name, triggers, actions}
     if (options.fake) return
@@ -619,7 +625,7 @@ function scriptGitHeader( filePath ) {
 
 // Remove all script headers from a script
 const deleteScriptHeaders = (script) => script.replace(/\/\/.fibery\s+.*[\r\n]+/, '')
-                                              .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '\n')
+                                              .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '')
 
 // Save an automation action script locally
 function saveLocalActionScript( typeDir, automationType, automation, action ) {
@@ -661,8 +667,8 @@ async function pull() {
                 }
             }
 
-            processAutomations( 'Button', buttons_filtered( await getButtonsForType(space, typeId) ))
-            processAutomations( 'Rule',   rules_filtered(   await getRulesForType(  space, typeId) ))
+            processAutomations( 'Button', buttons_filtered( await getButtonsForType(space, typeId, true) ))
+            processAutomations( 'Rule',   rules_filtered(   await getRulesForType(  space, typeId, true) ))
         }
     }
 
@@ -785,10 +791,12 @@ async function main() {
     switch (cmd || '')
     {
         case 'pull':
+            myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${cmd}\` command.`)
             await pull()
             break
 
         case 'push':
+            myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${cmd}\` command.`)
             await push()
             break
         
