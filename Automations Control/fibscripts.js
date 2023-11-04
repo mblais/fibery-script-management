@@ -1,26 +1,24 @@
 #!/usr/bin/env node
-// fibscripts.js - Manage Fibery Automations remotely
+// fibscripts.js - Manage Fibery Automation Scripts Remotely
 //---------------------------------------------------------------------------------------------------
 //TODO:
-// - Restore automations from old cache file
 
+import   childProcess    from 'node:child_process'
 import   assert          from 'node:assert/strict'
 import   path            from 'node:path'
-import   fs              from 'node:fs'                 // Synchronous
-import   childProcess    from 'node:child_process'      // Synchronous
+import   fs              from 'node:fs'
 import { parseArgs     } from 'node:util'
 import { oraPromise    } from 'ora'                     // Console "busy" spinner
-import { start } from 'node:repl'
 
 //---------------------------------------------------------------------------------------------------
 // Globals
 
-const thisScriptName    = path.basename( process.argv[1] ).replace(/\.[^.]+$/, '')    // Name of this program, without file extension
-let   domainDir                                         // Dir where everything for the domain is stored
+const thisScriptName    = path.basename( process.argv[1] ).replace(/\.[^.]+$/, '')    // Name of this program file without file extension
 let   options, positionals, FIBERY, FIBERY_DOMAIN
+let   domainDir                                         // Dir where everything for the Fibery workspace is stored
 let   workspace, schema, spaces
 let   cacheAfter, cacheBefore
-let   returnCode        = 0                             // program return code
+let   returnCode        = 0                             // Program return code
 let   debug             = false
 
 //---------------------------------------------------------------------------------------------------
@@ -29,9 +27,9 @@ let   debug             = false
 const {log}             = console
 const dbg               = (...args) => { if (debug) log('-', ...args) }
 const debugBreak        = () => { if (debug) debugger }
-const timestamp         = ( d=null ) => (d ?? new Date()).toLocaleString('sv', {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric', fractionalSecondDigits: 3}).replace(',', '.')
+function timestamp()    { return new Date(...arguments).toLocaleString('sv', {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric', fractionalSecondDigits: 3}).replace(',', '.') }
 const startTimestamp    = timestamp()
-const warned            = {}
+const warned            = {}                    // Don't repeat identical warnings
 
 function error(...args) {
     const err = args[0]
@@ -41,48 +39,48 @@ function error(...args) {
     debugBreak()
     process.exit(returnCode || 1)
 }
-
+const warn              = (...args)             => { const msg = args[0]; if (!warned[msg]) {warned[msg]=1; console.warn(...args)} }
 const myAssert          = (condition, msg)      => { if (!condition) error(msg) }       // When we don't want a stack trace
 const isaDirectory      = (path)                => { try { return fs.lstatSync(path).isDirectory() } catch(err) { return null } }
 const doesPathExist     = (fpath)               => { try { return fs.statSync(fpath)               } catch(err) { return null } }
 const doesDirContain    = (dirPath, fileName)   => doesPathExist(path.join(dirPath, fileName))
-const warn              = (...args)             => { const msg = args[0]; if (!warned[msg]) {warned[msg]=1; console.warn(...args)} }
 
 //---------------------------------------------------------------------------------------------------
 // Setup
 
 const commandLineOptions = {
-    domain:         { type: 'string',   short: 'd',                 },
-    space:          { type: 'string',   short: 's',  default: '*'   },  // default: match everything
-    type:           { type: 'string',   short: 't',  default: '*'   },  // default: match everything
-    button:         { type: 'string',   short: 'b',  default: ''    },  // default: match nothing
-    rule:           { type: 'string',   short: 'r',  default: ''    },  // default: match nothing
-    cache:          { type: 'boolean',  short: 'c',  default: false },
-    nogit:          { type: 'boolean',  short: 'g',  default: false },
-    fake:           { type: 'boolean',  short: 'f',  default: false },
-    verbose:        { type: 'boolean',  short: 'v',  default: false },
-    debug:          { type: 'boolean',  short: 'u',  default: false },
-    quiet:          { type: 'boolean',  short: 'q',  default: false },
-    yes:            { type: 'boolean',  short: 'y',  default: false },
-    validate:       { type: 'boolean',               default: false },
-    before:         { type: 'string',                               },
-    after:          { type: 'string',                               },
+    domain:        { type: 'string',   short: 'd',                 },
+    space:         { type: 'string',   short: 's',  default: '*'   },   // default: match all Spaces
+    type:          { type: 'string',   short: 't',  default: '*'   },   // default: match all Types
+    button:        { type: 'string',   short: 'b',  default: ''    },   // default: match no Buttons
+    rule:          { type: 'string',   short: 'r',  default: ''    },   // default: match no Rules
+    cache:         { type: 'boolean',  short: 'c',  default: false },
+    nogit:         { type: 'boolean',  short: 'g',  default: false },
+    fake:          { type: 'boolean',  short: 'f',  default: false },
+    verbose:       { type: 'boolean',  short: 'v',  default: false },
+    debug:         { type: 'boolean',  short: 'u',  default: false },
+    quiet:         { type: 'boolean',  short: 'q',  default: false },
+    yes:           { type: 'boolean',  short: 'y',  default: false },
+    nofiles:       { type: 'boolean',               default: false },
+    validate:      { type: 'boolean',               default: false },
+    before:        { type: 'string',                               },
+    after:         { type: 'string',                               },
 }
 
-// Parse command line
-function parseCommandLineArgs() {
+// Parse command line options
+function parseCommandLineOptions() {
     const {values, positionals: pos} = parseArgs({ args: process.argv.slice(2), options: commandLineOptions, allowPositionals: true })
     options             = values
     positionals         = pos ?? []
-    if (options.debug)    options.verbose = true
     debug               = debug || options.debug
+    if (debug)  options.verbose = true
 }
 
 // Setup and validate inputs
-async function doSetup( noCache=false ) {
+async function doSetup( forceCache=null ) {
     if (options.domain)   process.env.FIBERY_DOMAIN = options.domain            // --domain option overrides FIBERY_DOMAIN env var
     FIBERY_DOMAIN       = process.env.FIBERY_DOMAIN
-    myAssert(FIBERY_DOMAIN, `Fibery domain must be defined by either FIBERY_DOMAIN env var or --domain arg`)
+    myAssert(FIBERY_DOMAIN, 'Fibery workspace domain must be defined by either FIBERY_DOMAIN env var or `--domain` arg')
 
     // If FIBERY_DOMAIN is an entire path, split out FIBERY as the root path and FIBERY_DOMAIN as the domain dir (last part)
     if (FIBERY_DOMAIN?.indexOf(path.sep) >= 0) {
@@ -93,8 +91,9 @@ async function doSetup( noCache=false ) {
         myAssert(isaDirectory(FIBERY), `FIBERY env var should hold the path to the root dir for all Fibery local domain/workspace dirs`)
         domainDir       = path.join(FIBERY, FIBERY_DOMAIN)
     }
+    maybeCreateDir('workspace', domainDir)
 
-    // Should we try calling fiberyConfig.sh to set some env vars?
+    // Should we try calling fiberyConfig.sh to set FIBERY_API_KEY?
     if (!process.env.FIBERY_API_KEY) try {
         const moreEnvVars   = execFileSync('fiberyConfig.sh', ['-0', FIBERY_DOMAIN ?? '']).toString()
         // Add any returned env var definitions to process.env
@@ -103,105 +102,36 @@ async function doSetup( noCache=false ) {
             if (name) process.env[name.trim()] = value.trim()
         }
     } catch (err) {}
-
     myAssert(process.env.FIBERY_API_KEY, `FIBERY_API_KEY env var is not defined for workspace "${FIBERY_DOMAIN}"`)
 
-    // Set newest usable cache file date
+    // Set top of cache date range
     if (options.before) {
         cacheBefore = new Date(options.before.replace(/_/g, ':'))
-        myAssert(!isNaN(cacheBefore), `Invalid '--before' date: "${options.before}"`)
+        myAssert(!isNaN(cacheBefore), `Invalid \`--before\` date: "${options.before}"`)
     } else {
         cacheBefore = new Date()
-        cacheBefore.setFullYear(cacheBefore.getFullYear()+1)    // one year in the future
+        cacheBefore.setFullYear(1 + cacheBefore.getFullYear())    // one year in the future
     }
-    // Set oldest usable cache file date
+    // Set bottom of cache date range
     if (options.after) {
         cacheAfter = new Date(options.after.replace(/_/g, ':'))
-        myAssert(!isNaN(cacheAfter), `Invalid '--after' date: "${options.after}"`)
+        myAssert(!isNaN(cacheAfter), `Invalid \`--after\` date: "${options.after}"`)
     } else {
-        cacheAfter = new Date(0)        // The distant past
+        cacheAfter = new Date(0)                                // The distant past
     }
 
-    maybeCreateDir('workspace', domainDir)
-    await getSpaces(noCache)
-    await getSchema(noCache)
+    await getSpaces(forceCache)
+    await getSchema(forceCache)
 }
 
 function help( cmd ) {
     switch (cmd || '') {
 
-        case 'pull':
-            log(`
-${thisScriptName} pull
-    Download and save Fibery workspace Button and Rule Javascript actions. This will OVERWRITE existing local script files, so you make sure you've committed any local changes before doing a pull.
-
-    Use the filter options to limit what Spaces/DBs/Buttons/Rules will be retrieved:
-        --space       -s    Space   name filter
-        --type        -t    Type/DB name filter
-        --button      -b    Button  name filter
-        --rule        -r    Rule    name filter
-`)
-            break
-
-        case 'push':
-            log(`
-${thisScriptName} push
-    Push local Javascript Button and Rule actions back to Fibery workspace. This will OVERWRITE Fibery script actions, so make sure the curent Workspace scripts are backed up. A \`pull --fake\` command (without \`--cache\`) will download the current Workspace scripts to local cache; \`--fake\` prevents overwriting your lcoal script files.
-
-    Use the filter options to limit what Spaces/DBs/Buttons/Rules will be updated:
-        --space       -s    Space   name filter
-        --type        -t    Type/DB name filter
-        --button      -b    Button  name filter
-        --rule        -r    Rule    name filter
-`)
-            break
-
-        case 'purge':
-            log(`
-${thisScriptName} purge --before {date-time}
-    Purge local cache entries that were created before the specified cutoff.
-
-    Old cache files are not automatically deleted. Use the 'purge' program command to trim them.
-
-    Use the filter options to limit what Spaces/DBs/Buttons/Rules will be affected:
-        --space       -s    Space   name filter
-        --type        -t    Type/DB name filter
-`)
-            break
-
-        case 'orphans':
-            log(`
-${thisScriptName} orphans
-    Search for "orphaned" local files and dirs that no longer correspond to the Fibery Workspace.
-
-    You can use these filter options to limit which local Spaces/DB dirs will be checked:
-        --space       -s    Space   name filter
-        --type        -t    Type/DB name filter
-`)
-            break
-
-        case 'restore':
-            log(`
-${thisScriptName} restore --before {date-timestamp} --after {date-timestamp}
-    Restore older cached definitions of automations back to the Fibery Workspace. Use the '--before' and '--after' options to select which cache files to restore; the most recent cache file(s) within the defined period will be used.
-
-    The date-timestamps can be in any format that can be parsed by Javascript Date; e.g. "2023-01-30 13:45"
-
-    Note that the 'restore' command overwrites not just script actions but ENTIRE automations including Fibery filters and any non-script actions as well.
-
-    You can use these filter options to limit which local Buttons/Rules defintitions will be restored:
-        --space       -s    Space   name filter
-        --type        -t    Type/DB name filter
-        --button      -b    Button  name filter
-        --rule        -r    Rule    name filter
-`)
-            break
-
         case '':
             log(`
 ${thisScriptName} - Manage Fibery automation scripts locally
 
-Usage:  ${thisScriptName}  { pull | push | purge | orphans | restore | help {cmd} }  [ options... ]
+Usage:  ${thisScriptName}  { pull | push | purge | orphans | help {cmd} }  [ options... ]
 
 COMMANDS:
 
@@ -210,10 +140,9 @@ COMMANDS:
     push                  Push local Javascript Button and Rule actions back to Fibery workspace
     purge --before {date} Delete cache entries older than the specified cutoff
     orphans               List orphaned local files and dirs no were deleted in Fibery
-    restore               Restore older versions of automations to Fibery from cache files
-  
+
 OPTIONS: (can appear anywhere on the command line)
-  
+
     --domain      -d      The Fibery domain, e.g. "my.fibery.io" - or the full path to the local domain dir
     --space       -s      Space   name filter
     --type        -t      Type/DB name filter
@@ -226,8 +155,9 @@ OPTIONS: (can appear anywhere on the command line)
     --verbose     -v      Verbose output
     --quiet       -q      Disable progress messages and spinners
     --debug       -u      Debug output
-    --before {date-time}  High cutoff for cache files
-    --after  {date-time}  Low cutoff for cache files
+    --nofiles             Ignore local script files, only use cache content (with \`push\`)
+    --before {date-time}  High cutoff date-time for cache files (matches before OR EQUAL)
+    --after  {date-time}  Low cutoff date-time for cache files
 
 ENVIRONMENT VARIABLES:
 
@@ -277,13 +207,13 @@ DIRECTORY STRUCTURE
 
 CACHING
 
-    The results of Fibery API queries are stored in local cache files that begin with a period. These API results can be reused instead of re-querying Fibery, by specifying the \`--cache\` option. This can save time especially if you have many Spaces and DB's and automations.
+    The result of every Fibery API query that returns part of the Workspace is stored in a local cache files that begins with a period. These cached results can be reused instead of re-querying Fibery API by specifying the \`--cache\` option. This can save time especially if you have many Spaces and DB's and automations.
 
-    These cache files also serve as backups since they contain the complete definitions of all automations pulled from Fibery. Use the 'restore' command to restore automations from cache files.
+    These cache files also serve as backups, since they contain the complete definitions of all automations pulled from Fibery.
 
-    Old cache files are not automatically deleted. Use the 'purge' program command to trim older cache files.
+    Old cache files are not automatically deleted; Use the \`purge\` program command to trim them.
 
-    When the '--cache' option is specified, the most recent cache files will normally be used. But (especially with the 'restore' command) the '--before' and '--after' options can be used to define which cache files will be used. It is always the date encoded in a cache filename which is used to determine the file's nominal date.
+    When the \`--cache\` option is specified, the most recent cache files will normally be used, but the \`--before\` and \`--after\` options can be used to specify which cache files will be used. It is always the date encoded in a cache file name that determines the file's nominal date for comparing with \`--before\` and \`--after\`.
 
 EXAMPLES
 
@@ -294,9 +224,61 @@ EXAMPLES
     ${thisScriptName}  push                         # Pushes ALL local script actions to Fibery, overwriting existing Workspace scripts
     ${thisScriptName}  push --space='test*'         # Pushes local script actions for Spaces beginning with "test", overwriting existing Workspace scripts
     ${thisScriptName}  push --button='/test|foo'    # Pushes local script actions for Buttons containing "test" or "Foo" AND all Rules, overwriting existing Workspace scripts
-    ${thisScriptName}  purge --before 2023-01-30    # Deletes local API cache files created before before 2023-01-30
+    ${thisScriptName}  push --before 2023-01-30 --nofiles -b/   # Pushes old Buttons definitions from latest cache files before or on 2023-01-30
+    ${thisScriptName}  purge --before 2023-01-30    # Deletes local API cache files created before before or on 2023-01-30
     ${thisScriptName}  orphans                      # Find all "orphaned" local files and dirs that no longer correspond to the Fibery Workspace
-    ${thisScriptName}  restore --before '2023-01-30' -b/  # Restore all Button automations from newest cache files earlier than 2023-01-30
+`)
+            break
+
+        case 'pull':
+            log(`
+${thisScriptName} pull
+    Download and save Fibery workspace Button and Rule Javascript actions. This will OVERWRITE existing local script files, so you make sure you've committed any local changes before doing a pull.
+
+    Use the name filter options to limit what Spaces/DBs/Buttons/Rules will be retrieved:
+        --space       -s    Space   name filter
+        --type        -t    Type/DB name filter
+        --button      -b    Button  name filter
+        --rule        -r    Rule    name filter
+`)
+            break
+
+        case 'push':
+            log(`
+${thisScriptName} push
+    Push local Javascript Button and Rule actions back to Fibery workspace. This will OVERWRITE Fibery script actions, so make sure the curent Workspace scripts are backed up. A \`pull --fake\` command (without \`--cache\`) will download the current Workspace scripts to local cache; \`--fake\` prevents overwriting your lcoal script files.
+
+    If the \`--nofiles\` option is specified, local Button and Rule script files will be ignored, and their cached definitions will be pushed instead. In this case not only the actions will be pushed but also the complete cached automation definitions. This allows restoring complete Button/Rule definitions from old cached versions.
+
+    Use the name filter options to limit what Spaces/DBs/Buttons/Rules will be updated:
+        --space       -s    Space   name filter
+        --type        -t    Type/DB name filter
+        --button      -b    Button  name filter
+        --rule        -r    Rule    name filter
+`)
+            break
+
+        case 'purge':
+            log(`
+${thisScriptName} purge --before {date-time}
+    Purge local cache entries that were created on or before the specified cutoff date-time.
+
+    Older cache files are not automatically deleted. Use \`purge\` with \`--before\` to trim them.
+
+    Use the name filter options to limit what Spaces/DBs/Buttons/Rules will be affected:
+        --space       -s    Space   name filter
+        --type        -t    Type/DB name filter
+`)
+            break
+
+        case 'orphans':
+            log(`
+${thisScriptName} orphans
+    Search for "orphaned" local files and dirs that no longer correspond to the Fibery Workspace.
+
+    You can use these filter options to limit which local Spaces/DB dirs will be checked:
+        --space       -s    Space   name filter
+        --type        -t    Type/DB name filter
 `)
             break
 
@@ -340,7 +322,7 @@ class FiberyWorkspaceSchema {
         this.types = Object.fromEntries( schemaRaw['fibery/types']
             .filter( t => !( t['fibery/deleted?'] ||
                              t['fibery/meta']?.['fibery/enum?'] ||
-                             t['fibery/name'].match(/^[a-z]|^Collaboration~Documents\//) ))
+                             t['fibery/name'].match(/^[a-z]|^Collaboration~Documents\/|^Files\/Files-mixin/) ))
             .map(    t =>   [t['fibery/name'], t] ) )
         this.spaces         = {}
         for (const [typeName, type] of Object.entries(this.types)) {
@@ -405,19 +387,15 @@ const tokenFileName = (tokenType, id) => `.${id}.${tokenType}`
 
 // Create a dir (and maybe token file) if it doesn't already exist (maybe)
 function maybeCreateDir( type, dir, tokenFile=null ) {
-    const msg = `Missing ${type} dir "${dir}" - Use the \`--yes\` option to create missing directories automatically`
-    if (!isaDirectory(dir) || warned[msg]) {
-        if (!options.yes)
-            error(msg)
+    if (!isaDirectory(dir)) {
+        if (!options.yes) error(`Missing ${type} dir "${dir}" - Use the \`--yes\` option to create missing directories automatically`)
         warn(`Creating ${type} dir: \t${dir}`)
-        if (!options.fake)
-            fs.mkdirSync(dir, {recursive: true})
+        if (!options.fake) fs.mkdirSync(dir, {recursive: true})
     }
     if (tokenFile) {
         // Create the dir's token file (to identify the dir by its Fibery id)
         const tokenPath = path.join(dir, tokenFile)
-        if (!doesPathExist(tokenPath) && !options.fake)
-            fs.writeFileSync(tokenPath, '')
+        if (!doesPathExist(tokenPath) && !options.fake) fs.writeFileSync(tokenPath, '')
     }
     return dir
 }
@@ -470,10 +448,10 @@ function find_scriptFile_byHeader( typeDir, idealFilePath, header ) {
 }
 
 // Find the local *.js script file for an action
-function localActionScriptPath( typeDir, automationType, automationName, automationId, actionId ) {
+function localActionScriptPath( typeDir, automationKind, automationName, automationId, actionId ) {
     const idHeader      = scriptIdHeader(automationId, actionId)
     const scriptAction  = actionId.slice(-4)                                // Differentiates multiple scripts in the same Automation
-    const fileName      = `${automationType.toUpperCase()}~ ${automationName} ~${scriptAction}.js`   // This is what the script filename should be
+    const fileName      = `${automationKind.toUpperCase()}~ ${automationName} ~${scriptAction}.js`   // This is what the script filename should be
     const idealFile     = path.join(typeDir, fileName)
     const existingFile  = find_scriptFile_byHeader(typeDir, idealFile, idHeader)
     return maybeRenameExisting('script', existingFile, idealFile)
@@ -481,9 +459,9 @@ function localActionScriptPath( typeDir, automationType, automationName, automat
 
 // Find a subdir that comtains the specified token file
 function findSubdirByTokenFile(parentDir, tokenFile) {
-    return readdirSync(parentDir).find(
-        subdir => doesDirContain( path.join(parentDir, subdir), tokenFile )
-    )
+    const found = readdirSync(parentDir).find(
+        subdir => doesDirContain( path.join(parentDir, subdir), tokenFile ))
+    return found ? path.join(parentDir, found) : null
 }
 
 // Get the local dir for a Space
@@ -522,89 +500,91 @@ function getCacheDir( space, typeId, cacheType ) {
 function selectCacheFile( cacheDir ) {
     // Cache filenames are a munged timestamp (colons=>underscores) of their program start time
     const file = readdirSync(cacheDir)
-        .sort( (a,b) => 1 - a.localeCompare(b) )            // reverse, so most recent is first
+        .sort( (a,b) => -a.localeCompare(b) )               // Sort descending - most recent first
         .find( (name) => {
-            const m = name.match(/^(\d\d\d\d-\d\d-\d\d \d\d_\d\d_\d\d)\.\d+\.jsonc$/)
+            const m = name.match(/^(\d\d\d\d-\d\d-\d\d \d\d_\d\d_\d\d\.\d+)\.jsonc$/)
             if (!m) return false
             const date = new Date( m[1].replace(/_/g, ':') )
             if (isNaN(date)) return false
-            return date>cacheAfter && date<cacheBefore      // find the first one that satisfies
+            return date>cacheAfter && date<=cacheBefore     // find the first one that satisfies
         })
     return file
 }
 
-// Get cached or fresh object
-async function cachify( space, typeId, cacheType, creatorFunc, noCache=false ) {
-    const cacheDir              = getCacheDir(space, typeId, cacheType)
-    if (options.cache && !noCache) {
+// Get a cached or fresh object
+async function cachify( space, typeId, cacheType, forceCache, creatorFunc ) {
+    const cacheDir      = getCacheDir(space, typeId, cacheType)
+    if (forceCache==null) forceCache = options.cache        // default: false
+    if (forceCache) {
         // Use cached data if available
-        const cacheFile     = selectCacheFile(cacheDir)
+        const cacheFile = selectCacheFile(cacheDir)
         if (cacheFile) {
-            dbg(`reading  cache:   \t${path.join(cacheDir, cacheFile)}`)
-            let content     = readFileSync(path.join(cacheDir, cacheFile))
-            while (!content.match(/^\s*[[{}]/))         // Delete any leading comment lines before JSON
-                content     = content.replace(/.*[\r\n]*/, '')
-            const obj       = JSON.parse(content)
+            const cachePath = path.join(cacheDir, cacheFile)
+            dbg(`reading  cache:   \t${cachePath}`)
+            let content = readFileSync(cachePath)
+            while (!content.match(/^\s*[[{}]/))             // Delete any cruft/comments before start of JSON
+                content = content.replace(/.*[\r\n]*/, '')
+            const obj   = JSON.parse(content)
             return obj
         }
     }
     // Get fresh data
     const obj = await creatorFunc()
     // Write the fresh data to a new cache entry
-    const timestamp     = startTimestamp.replace(/:/g, '_')     // Windows can't handle ':' in filenames
-    const cacheFilename = path.join(cacheDir, `${timestamp}.jsonc`)
-    const content       = `//# ${cacheFilename}\n` + JSON.stringify(obj)
-    dbg(`saving   cache:    \t${path.join(cacheDir, cacheFilename)}`)
-    if (!options.fake)
-        fs.writeFileSync(cacheFilename, content)
+    const timestamp     = startTimestamp.replace(/[:;\\<>|]/g, '_')     // Windows can't handle these in filenames
+    const cachePath     = path.join(cacheDir, `${timestamp}.jsonc`)
+    const content       = `//# ${cachePath}\n` + JSON.stringify(obj)
+    dbg(`saving   cache:    \t${cachePath}`)
+    if (!options.fake) fs.writeFileSync(cachePath, content)
     return obj
 }
 
 //---------------------------------------------------------------------------------------------------
 
 // Get the Workspace schema
-async function getSchema( noCache=false ) {
-    const data = await cachify(null, null, 'schema', async() => {
-        const data = await fiberyFetch( '/api/commands', 'POST', '[{"command":"fibery.schema/query"}]'  )
+async function getSchema( forceCache=null ) {
+    const data     = await cachify(null, null, 'schema', forceCache, async() => {
+        const data = await fiberyFetch('/api/commands', 'POST', '[{"command":"fibery.schema/query"}]')
         myAssert(data?.[0]?.success, `Error retrieving schema for ${FIBERY_DOMAIN} - check your FIBERY_API_KEY?`)
         return data
-    }, noCache)
+    })
     schema = new FiberyWorkspaceSchema( data[0].result )
 }
 
 // Get the list of Spaces in the Fibery workspace
-async function getSpaces( noCache=false ) {
-    spaces = await cachify(null, null, 'spaces', async() => {
-        const data = await fiberyFetch( '/api/commands?reason=preload&command=fibery.app/get-available-apps', 'POST', '[{"command":"fibery.app/get-available-apps","args":{}}]' )
+async function getSpaces( forceCache=null ) {
+    spaces = await cachify(null, null, 'spaces', forceCache, async() => {
+        const data = await fiberyFetch('/api/commands?reason=preload&command=fibery.app/get-available-apps', 'POST', '[{"command":"fibery.app/get-available-apps","args":{}}]')
         myAssert(data?.length > 0, `Could not read spaces for ${FIBERY_DOMAIN} - check your FIBERY_API_KEY env var`)
         const result = {}
         for (const space of data[0].result) {
             const name = space['app-namespace']
-            if (!name.match(/^[a-z]|^Collaboration~Documents$|^Files$/))
-                result[name] = { name, id: space['app-id'] }
+            if (!name.match(/^[a-z]|^Collaboration~Documents$|^Files$/)) {
+                const id = space['app-id']
+                result[name] = {name, id}
+            }
         }
-        myAssert(Object.keys(result)?.length > 0, `Did not fetch any spaces from ${FIBERY_DOMAIN}`)
+        myAssert(Object.keys(result)?.length > 0, `Did not fetch any user Fibery Spaces from Workspace "${FIBERY_DOMAIN}"`)
         return result
-    }, noCache)
+    })
 }
 
 // Create a filter function for names of Rules/Buttons/Spaces/Types
 function makeFilter( pattern, field='name' ) {
-    if (!pattern)
-        return            () => false
-    if (pattern==='*' || pattern==='/')
-        return            () => true                            // Match everything
+    if (!pattern)                       return () => false      // Matches nothing
+    if (pattern==='*' || pattern==='/') return () => true       // Matches everything
     const negate        = pattern.startsWith('!')               // Start a pattern with '!' to negate it
     if (negate) pattern = pattern.substr(1)
-
-    const makeReFilter  = (pat, field) => {
+    const makeReFilter  = (pat, field, negate) => {
         const re        = new RegExp(pat, 'i')
-        return negate   ? (obj) =>  !re.exec(typeof obj==='string' ? obj : obj[field])
-                        : (obj) => !!re.exec(typeof obj==='string' ? obj : obj[field])
+        return (obj) => {
+             const n = !re.exec(typeof obj==='string' ? obj : obj[field])
+             return negate ? n : !n
+        }
     }
     return pattern.startsWith('/') ?
-            makeReFilter( pattern.substr(1).replace(/\/$/, ''),     field )      // Regex
-          : makeReFilter( `^${pattern.replace(/([*?])/g, '.$1')}$`, field )      // Glob
+        makeReFilter( pattern.substr(1).replace(/\/$/, ''), field, negate )     // Regex
+      : makeReFilter( `^${pattern.replace(/\*+/g, '.*')}$`, field, negate )     // Glob-like
 }
 
 // Generate all Spaces that pass the Space name filter
@@ -638,30 +618,18 @@ function* rules_filtered( rules ) {
         .sort( (a,b) => a.name.localeCompare(b.name) )
 }
 
-// Get all Button definitions for a Type/DB
-async function getButtonsForType( space, typeId, noCache=false ) {
-    const result = await cachify( space, typeId, 'buttons',
-        async() => fiberyFetch(`/api/automations/buttons/for-type/${typeId}`, 'GET'), noCache )
+const getAutomationKindSubpath = (kind) =>
+    kind.match( /rule/i   ) ? 'auto-rules' :
+    kind.match( /button/i ) ? 'buttons'    :
+    assert.ok( false )
+
+// Get all Button/Rule definitions for a Type/DB
+async function getAutomationsForType( kind, space, typeId, forceCache=null ) {
+    const kindPath  = getAutomationKindSubpath(kind)
+    const result    = await cachify(space, typeId, kind, forceCache,
+        async() => fiberyFetch(`/api/automations/${kindPath}/for-type/${typeId}`, 'GET'))
     assert.ok(result instanceof Array)
     return result
-}
-
-// Get all Rule definitions for a Type/DB
-async function getRulesForType( space, typeId, noCache=false ) {
-    const result = await cachify( space, typeId, 'rules',
-        async() => fiberyFetch(`/api/automations/auto-rules/for-type/${typeId}`, 'GET'), noCache )
-    assert.ok(result instanceof Array)
-    return result
-}
-
-// Push a Button or Rule automation to the Fibery workspace (includes all actions)
-async function updateAutomation( automationType, automation ) {
-    const autoPath  = automationType.match(/rule/i)   ? 'auto-rules' :
-                      automationType.match(/button/i) ? 'buttons'    :
-                      assert.ok(false)
-    const {name, triggers, actions, id} = automation
-    const data = {name, triggers, actions}
-    return fiberyFetch(`/api/automations/${autoPath}/${id}`, 'PUT', data)
 }
 
 // Generate a script's Id comment line
@@ -689,15 +657,23 @@ const deleteScriptHeaders = (script) => script.replace(/\/\/.fibery\s+.*[\r\n]+/
                                               .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '')
 
 // Save an automation action script locally
-function saveLocalActionScript( typeDir, automationType, automation, action ) {
+function saveLocalActionScript( typeDir, automationKind, automation, action ) {
     const script     = action.args.script.value
-    const scriptPath = localActionScriptPath(typeDir, automationType, automation.name, automation.id, action.id)
+    const scriptPath = localActionScriptPath(typeDir, automationKind, automation.name, automation.id, action.id)
     if (options.verbose) log(`Saving:  \t${scriptPath}`)
     if (options.fake) return
     const apiHeader  = scriptIdHeader(automation.id, action.id)
     const bareScript = deleteScriptHeaders(script)
     const newScript  = `${apiHeader}\n${bareScript}`
     fs.writeFileSync(scriptPath, newScript)
+}
+
+// Push an entire Button or Rule automation definition to the Workspace
+async function updateAutomation( kind, automation ) {
+    const kindPath = getAutomationKindSubpath(kind)
+    const {name, triggers, actions, id} = automation
+    const data = {name, triggers, actions}
+    return fiberyFetch(`/api/automations/${kindPath}/${id}`, 'PUT', data)
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -715,22 +691,22 @@ async function pull() {
             const typeId = type['fibery/id'], typeName = type['fibery/name'], typeDir = getTypeDir(space, typeId)
             if (options.verbose) log(`Scanning DB:        \t${typeName} \t${typeId}`)
 
-            function processAutomations( automationType, automations ) {
+            function processAutomations( automationKind, automations ) {
                 for (const automation of automations) {
                     ++automationsCount
-                    if (options.verbose) log(`Scanning ${automationType}: \t${automation.name} \t${automation.id}`)
+                    if (options.verbose) log(`Scanning ${automationKind}: \t${automation.name} \t${automation.id}`)
                     // Check each action for a script
                     for (const action of automation.actions) {
                         if (action.args?.script) {
                             ++actionsCount
-                            saveLocalActionScript(typeDir, automationType, automation, action)
+                            saveLocalActionScript(typeDir, automationKind, automation, action)
                         }
                     }
                 }
             }
 
-            processAutomations( 'Button', buttons_filtered( await getButtonsForType(space, typeId, true) ))
-            processAutomations( 'Rule',   rules_filtered(   await getRulesForType(  space, typeId, true) ))
+            processAutomations( 'Button', buttons_filtered( await getAutomationsForType('buttons', space, typeId, false) ))  // no cache
+            processAutomations( 'Rule',     rules_filtered( await getAutomationsForType(  'rules', space, typeId, false) ))  // no cache
         }
     }
 
@@ -738,7 +714,7 @@ async function pull() {
     else if (typesCount      ==0) warn('No DBs were matched - check your `--type` filter.')
     else if (automationsCount==0) warn('No automations were matched - check your filters.')
     else if (actionsCount    ==0) warn(`${automationsCount} automations were matched, but no script actions were found.`)
-    else                           log(`${actionsCount} actions ${options.fake ? 'found to pull':'were saved'}`)
+    else                           log(`${actionsCount} actions ${options.fake ? 'found to save':'were saved'}`)
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -759,43 +735,57 @@ async function push() {
             const typeId  = type['fibery/id']
             const typeDir = await getTypeDir(space, typeId)
 
-            // Update automation actions from local script files
-            async function updateActions( automationType, automations ) {
+            // Update automation actions for Buttons or Rules
+            async function updateActions( automationKind, automations ) {
                 ++automationsCount
-                let   dirtyCount    = 0                                 // How many actions were updated?
-                // Check each automation (Button/Rule) in this Type
+                // Check each automation (Button/Rule) in this Type/DB
                 for (const automation of automations) {
-                    ++actionsCount
-                    if (options.verbose) log(`Scanning ${automationType}:    \t${automation.name} \t${automation.id}`)
-                    let actionNum   = 0
-                    // Check each action in this automation
-                    for (const action of automation.actions) {
-                        ++actionNum
-                        if (!action?.args?.script) continue             // Ignore this action: not a script
-                        const scriptPath = localActionScriptPath(typeDir, automationType, automation.name, automation.id, action.id)
-                        if (!doesPathExist(scriptPath)) {
-                            warn(`Local script file not found: ${scriptPath}} -- use \`${thisScriptName} pull\` to get current script definitions from Fibery`)
-                            dirtyCount  = 0                             // Don't update any actions in this automation
-                            break
-                        }
-                        const bareScript = deleteScriptHeaders( readFileSync(scriptPath) )
-                        const apiHeader  = scriptIdHeader(automation.id, action.id)
-                        const gitHeader  = scriptGitHeader(scriptPath)
-                        const newScript  = `${apiHeader}${gitHeader}\n${bareScript}`    // Add script headers
-                        action.args.script.value = newScript            // Update the automation action with the local script
-                        log(`Pushing: \t${scriptPath}`)
+                    ++automationsCount
+                    if (options.verbose) log(`Scanning ${automationKind}:    \t${automation.name} \t${automation.id}`)
+                    let dirtyCount = 0                                      // How many actions to update in current automation?
+                    if (options.nofiles) {
+                        // When --nofiles is specified, push entire cached automation definitions, ignoring local script files
                         ++dirtyCount
+                        actionsCount += automation.actions.length
+                        log(`Pushing cached automation: \t${automation.name}`)
                     }
-                    // Update all actions in this automation
-                    if (dirtyCount>0)
-                        await updateAutomation(automationType, automation)
-                    else
-                    if (options.verbose) log(`no actions to update for ${automationType} [${space.name}/${type.name}] ${automation.name}`)
+                    else {
+                        // Check each action in the automation
+                        for (const action of automation.actions) {
+                            if (!action?.args?.script) continue             // Ignore this action: not a script
+                            const scriptPath = localActionScriptPath(typeDir, automationKind, automation.name, automation.id, action.id)
+                            if (!doesPathExist(scriptPath)) {
+                                warn(`Local script file not found: ${scriptPath}} -- use \`${thisScriptName} pull\` to get current script definitions from Fibery`)
+                                warn(`No 'push' will be done for ${automationKind} "${automation.name}"`)
+                                returnCode  = 1
+                                dirtyCount  = 0                             // Don't update any actions in this automation
+                                break
+                            }
+                            ++actionsCount
+                            const bareScript = deleteScriptHeaders( readFileSync(scriptPath) )
+                            const apiHeader  = scriptIdHeader(automation.id, action.id)
+                            const gitHeader  = scriptGitHeader(scriptPath)
+                            const newScript  = `${apiHeader}${gitHeader}\n${bareScript}`    // Add script headers
+                            action.args.script.value = newScript            // Update the automation action with the local script
+                            log(`Pushing: \t${scriptPath}`)
+                            ++dirtyCount
+                        }
+                    }
+                    if (dirtyCount>0) {
+                        // Update the automation
+                        await updateAutomation(automationKind, automation)
+                    } else {
+                        if (options.verbose) log(`no actions to update for ${automationKind} [${space.name}/${type.name}] ${automation.name}`)
+                    }
                 }
             }
 
-            await updateActions('Button', buttons_filtered( await getButtonsForType(space, typeId, true) ))
-            await updateActions('Rule',   rules_filtered(   await getRulesForType(  space, typeId, true) ))
+            // Always force cache when getting automations to update:
+            // When '--nofiles' is true, ALWAYS get old automations from cache so we will push entire historical automation definitions;
+            // otherwise NEVER use cache, so we will always get CURRENT automation defs from Fibery and then only update the action scripts.
+            const forceCache = options.nofiles
+            await updateActions('Button', buttons_filtered( await getAutomationsForType('buttons', space, typeId, forceCache) ))
+            await updateActions('Rule',     rules_filtered( await getAutomationsForType('rules',   space, typeId, forceCache) ))
         }
     }
 
@@ -811,28 +801,29 @@ async function push() {
 //
 async function purge() {
     await doSetup()
-    myAssert(cacheBefore, `Invalid '--before' date: "${options.before}"`)
     let filesPurged = 0
 
-    function purgeCacheFiles( dir ) {
-        // Delete all cache files in dir that are older than cutoff
-        for (fileName of readdirSync(dir)) {
+    // Process all cache files in dirPath
+    function purgeCacheFiles( dirPath ) {
+        for (fileName of readdirSync(dirPath)) {
             const m         = fileName.match( /(?<year>\d\d\d\d)-(?<month>\d\d)-(?<day>\d\d) (?<hours>\d\d).(?<minutes>\d\d).(?<seconds>\d\d)\.(?<ms>\d+)\.jsonc$/ )
             if (!m) continue
             const {year, month, day, hours, minutes, seconds, ms} = m.groups
             const fileDate  = new Date()
             fileDate.setFullYear(year, month-1, day)
             fileDate.setHours(hours, minutes, seconds, ms)
-            if (fileDate > cacheBefore) continue
-            const filePath  = path.join(dir, fileName)
-            log(`purging: \t${filePath}`)
+            if (fileDate>cacheBefore || fileDate<cacheAfter) continue
+            const filePath  = path.join(dirPath, fileName)
+            log(`deleting: \t${filePath}`)
             if (!options.fake) fs.unlinkSync(filePath)
             ++filesPurged
         }
     }
 
-    purgeCacheFiles( path.join(domainDir, '.fibery', '.schema') )
-    purgeCacheFiles( path.join(domainDir, '.fibery', '.spaces') )
+    const cacheDir = getSpaceDir()
+    purgeCacheFiles( path.join(cacheDir, '.schema') )
+    purgeCacheFiles( path.join(cacheDir, '.spaces') )
+
     for (const space of spaces_filtered()) {
         for (const type of types_filtered(space)) {
             const typeDir = getTypeDir(space, type['fibery/id'])
@@ -840,7 +831,7 @@ async function purge() {
             purgeCacheFiles( typeDir, '.rules')
         }
     }
-    log(`${options.fake ? 'Found':'Purged'} ${filesPurged} cache files older than ${cacheBefore}`)
+    log(`${options.fake ? 'Found':'Purged'} ${filesPurged} cache files before/= ${cacheBefore}`)
 }
 
 // Get Space/DB Id from directory token file
@@ -849,14 +840,15 @@ function getDirTokenId( path, suffix ) {
     return tokenFilename?.replace(/^\.?([-\w]+)\.\w*/, '$1')
 }
 
-// Get automation Ids from header comment of script file
-function getActionIds( actionFile ) {
-    const  fileText = readFileSync(actionFile)
+// Get the automation Ids from the API header comment in a script file
+function parseFileActionIds( scriptFilePath ) {
+    const  fileText = readFileSync(scriptFilePath)
     const  [, scriptId,  actionId] = fileText.match(/\/\/\.fibery\s+SCRIPTID=([-\w]+)\s+ACTIONID=([-\w]+)/) || []
     return [scriptId, actionId]
 }
-// Find a Button/Rule action by its Ids
-function findAction( automations, scriptId, actionId ) {
+
+// Find a Button/Rule action in automations by its Ids
+function findActionInAutomations( automations, scriptId, actionId ) {
     const auto   =    automations.find( a => a.id===scriptId )
     const action = auto?.actions?.find( a => a.id===actionId )
     return action
@@ -866,12 +858,11 @@ function findAction( automations, scriptId, actionId ) {
 // Orphans: List local entities no longer existing in the Fibery Workspace
 //
 async function orphans() {
-    myAssert(!options.button && !options.rule, 'The `orphans` command does not use the `--rule` or `--button` filters')
-    const nocache = true
-    await doSetup(nocache)
+    myAssert(!options.button && !options.rule, 'The `orphans` command does not use the `--rule` or `--button` options.')
+    await doSetup()
 
     const trailingDirSep = path.sep
-    const FilteredSpaces = Array.from( spaces_filtered() )
+    const filteredSpaces = Array.from( spaces_filtered() )
 
     // Scan all Space dirs
     for (const spaceDir of readdirSync(domainDir).filter(dir => dir.startsWith('SPACE~ '))) {
@@ -881,7 +872,7 @@ async function orphans() {
             warn(`Space dir does not have an Id: \t${spacePath}`)
             continue
         }
-        const space = FilteredSpaces.find( s => s.id===spaceId )
+        const space = filteredSpaces.find( s => s.id===spaceId )
         if (!space) {
             log(`Orphaned Space: \t${spacePath + trailingDirSep}`)
             continue
@@ -901,106 +892,68 @@ async function orphans() {
                 log(`Orphaned DB: \t${typePath + trailingDirSep}`)
                 continue
             }
-            const buttons = Array.from( await getButtonsForType(space, typeId, nocache) )   // NOT filtered
-            const rules   = Array.from( await   getRulesForType(space, typeId, nocache) )   // NOT filtered
+            const buttons = Array.from( await getAutomationsForType('buttons', space, typeId) )   // NOT filtered
+            const rules   = Array.from( await getAutomationsForType(  'rules', space, typeId) )   // NOT filtered
 
-            // Scan all action script files in Type/DB dir
-            for (const actionFile of readdirSync(typePath).filter(dir => dir.match('^(?:BUTTON|RULE)~.*\.js'))) {
-                const  actionFilePath = path.join(typePath, actionFile)
-                const [scriptId, actionId] = getActionIds(actionFilePath)
-                if (!scriptId || !actionId) {
-                    warn(`Script is missing Id comment: \t${actionFilePath}`)
+            // Scan all files in Type/DB dir for orphaned scripts
+            for (const fileName of readdirSync(typePath)) {
+                const  filePath = path.join(typePath, fileName)
+                if (!fileName.match(/^(?:BUTTON|RULE)~.*\.js/i)) {
+                    if (!fileName.startsWith('.')) warn(`Ignoring unexpected filename: \t"${filePath}"`)
                     continue
                 }
-                const action = findAction(buttons, scriptId, actionId) ||
-                               findAction(  rules, scriptId, actionId)
+                const [scriptId, actionId] = parseFileActionIds(filePath)
+                if (!scriptId || !actionId) {
+                    warn(`Did not find valid Id comment in script: \t${filePath}`)
+                    continue
+                }
+                const action = findActionInAutomations( fileName.match(/^BUTTON~/i) ? buttons : rules, scriptId, actionId )
                 if (!action)
-                    log(`Orphaned script: \t${actionFilePath}`)
+                    log(`Orphaned script: \t${filePath}`)
             }
         }
     }
 }
 
-//---------------------------------------------------------------------------------------------------
-// Restore: Restore old cached automation definitions to the Workspace
-//
-async function restore() {
-    options.cache = true
-    await doSetup()
-    const FilteredSpaces = Array.from( spaces_filtered() )
-
-    // Scan all Space dirs
-    for (const spaceDir of readdirSync(domainDir).filter(dir => dir.startsWith('SPACE~ '))) {
-        const spacePath = path.join(domainDir, spaceDir)
-        const   spaceId = getDirTokenId(spacePath, '.space')
-        if (!spaceId) {
-            warn(`Space dir does not have an Id: \t${spacePath}`)
-            continue
-        }
-        const space = FilteredSpaces.find( s => s.id===spaceId )
-        if (!space) {
-            warn(`Ignoring orphaned Space: \t${spacePath + trailingDirSep}`)
-            continue
-        }
-        const types = Array.from(types_filtered(space))
-
-        // Scan all Types/DBs in the Space dir
-        for (const typeDir of readdirSync(spacePath).filter(dir => dir.startsWith('DB~ '))) {
-            const  typePath = path.join(spacePath, typeDir)
-            const  typeId   = getDirTokenId(typePath, '.db')
-            if (!typeId) {
-                log(`DB dir does not have an Id: \t${typePath}`)
-                continue
-            }
-            const type = types.find( t => t['fibery/id']===typeId )
-            if (!type) {
-                log(`Orphaned DB: \t${typePath + trailingDirSep}`)
-                continue
-            }
-        }
-    }
-}
 
 //---------------------------------------------------------------------------------------------------
 // MAIN
 //
 async function main() {
-    parseCommandLineArgs()
+    parseCommandLineOptions()
     dbg(`${thisScriptName} ${positionals.join(' ')}   \t${JSON.stringify(options)}`)
     let cmd = positionals.shift()
     switch (cmd || '')
     {
         case 'pull':
             myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${cmd}\` command.`)
+            myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
             await pull()
             break
-
+            
         case 'push':
             myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${cmd}\` command.`)
+            myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
             await push()
             break
-
-        case 'restore':
-            myAssert(options.before || options.after, `You must specify the \`--before\` and/or \`--after\` options with the \`${cmd}\` command.`)
-            myAssert(options.button || options.rule,  `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${cmd}\` command.`)
-            await restore()
-            break
-    
+            
         case 'purge':
-            myAssert(options.before, `'purge' requires using the '--before' option to specify the cutoff date of the oldest cache files to keep.`)
+            myAssert(options.before, `\`${cmd}\` requires the \`--before\` option to specify the cutoff date (older cache files will be deleted).`)
+            myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
             await purge()
             break
-
+                
         case 'orphans':
             await orphans()
-            break
+            myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
+        break
 
         case '':
-            if (options.validate) {
+            if (options.validate)
                 log(`FIBERY:      \t${FIBERY}\nFIBERY_DOMAIN:\t${FIBERY_DOMAIN}`)
-            }
             else
                 help()
+            returnCode = 1
             break
 
         case 'help':
@@ -1010,6 +963,7 @@ async function main() {
         default:
             myAssert(false, `Unrecognized command "${cmd}"`)
             help()
+            returnCode = 1
             break
     }
 }
