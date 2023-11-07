@@ -1,6 +1,6 @@
 //.fibery SCRIPTID=64a5f4ddff58afe1ab947567 ACTIONID=b408d7c2-84bd-4a42-b9f8-38b965e8fa2b
 
-const fibery = context.getService('fibery');
+const fibery = context.getService('fibery')
 const schema = await fibery.getSchema()
 const type = args.currentEntities[0].type
 const log = console.log
