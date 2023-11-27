@@ -11,3 +11,5 @@
 *.tsv
 *.zip
 **/\#*
+Automations Control/picocolors methods.txt
+Automations Control/test-save.sh
