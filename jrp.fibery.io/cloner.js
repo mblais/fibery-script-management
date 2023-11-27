@@ -1,7 +1,7 @@
-//TODO: check auto-linked OneToOne relation
+//TODO: support auto-link relations with multiple Rules
 
-const dbg                   = null
-// const dbg                   = console.log
+// const dbg                   = null
+const dbg                   = console.log
 
 const API_TOKEN             = '5ca15987.3c0091232ae3a06a509ca0601213f26a844' // Required to copy Files attachments - See Workspace menu | Settings | Personal | API Keys
 const fiberyAccountHostName = 'https://jrp.fibery.io'       // Required to copy Files attachments
@@ -22,7 +22,7 @@ const fiberyAccountHostName = 'https://jrp.fibery.io'       // Required to copy 
 const templateField         = 'Template'                    // Field name of the Template relation that links to the template entity to be cloned
 const templateTargetsField  = 'Template Targets'            // Field name of the other side of a Template relation (collection)
 const isTemplateField       = 'Is Template'                 // Name of the field that determines if an entity is a Template
-const rulesField            = 'Rules'                       // Name of field containing Rules
+const rulesField            = 'Rules'                       // Name of field containing Script-Rules
 const titleField            = 'Title'                       // Name of field containing entity Title
 const fibery                = context.getService('fibery')
 const schema                = await fibery.getSchema()
@@ -68,12 +68,13 @@ const isTitleField = (fieldObject) => _itf.cache( fieldObject, () => {
 const _iate = new Cache()
 async function isaTemplateEntity( type, entity ) {
     if ( !entity ) return false
+    assert( entity instanceof Object, `isaTemplateEntity: entity is not instanceof Object` )
     const key = entityKey(type, entity.Id)
     return _iate.cache( key, async () => {
         if ( !typeHasIsTemplateField(type) ) return false
         if ( !(isTemplateField in entity) )
-            entity = await getEntityProxy(type, entity.Id)           // Get full entity with isTemplateField
-        // dbg && dbg( `isaTemplateEntity( ${key} ):  ${!! entity[isTemplateField]}` )
+            entity = await getEntityProxy(type, entity.Id)                  // Get full entity with isTemplateField
+        dbg && dbg( `isaTemplateEntity( ${key} ):  ${!! entity[isTemplateField]}` )
         return !! entity[isTemplateField]
     })
 }
@@ -102,7 +103,7 @@ const is_OneToX_relation     = (fieldObject) => _iotr.cache( fieldObject.id, () 
     assert( relatedTypeSchema, `Didn't find relatedTypeSchema for [${relatedType}]` )
     const relatedFieldObject = relatedTypeSchema.fieldObjects.find( (fieldObject2) => fieldObject2['relation']===fieldObject.relation )
     assert( relatedFieldObject, `Didn't find relatedType fieldObject for [${relatedType}] "${fieldObject.title}"` )
-    // dbg && dbg( `Related fieldObject for [${relatedType}] "${fieldObject.title}"`, relatedFieldObject )
+    dbg && dbg( `Related fieldObject for [${relatedType}] "${fieldObject.title}"`, relatedFieldObject )
     return !relatedFieldObject.isCollection
 })
 
@@ -131,14 +132,14 @@ const linkRuleFields                = (fieldObject) => {
         const linkRule              = fieldObject.linkRule || (relatedFieldObject && relatedFieldObject.linkRule)
         if ( !linkRule )            return []
         assert( linkRule['operands'] && linkRule.operands[0], `${debugInfo} - null linkRule.operands[0]` )
-        // dbg && dbg(`🔗${debugInfo}\n`, JSON.stringify(linkRule,null,2))
+        dbg && dbg(`🔗${debugInfo}\n`, JSON.stringify(linkRule,null,2))
         const op = linkRule.operands[0]
         // assert( op,                         `${debugInfo} - linkRule.operands[0] is ${op}`)
         // assert( op['operator'] === '=',     `${debugInfo} - op.operator is "${op['operator']}"` )
         // assert( op['expression'],           `${debugInfo} - null op.expression` )
         // assert( op['relationExpression'],   `${debugInfo} - null op.relationExpression` )
         // [0] corresponds to the linked expression field in the current type
-        // dbg && dbg( `[${fieldObject.type}]."${fieldObject.title}" linkRule: `, linkRule )
+        dbg && dbg( `[${fieldObject.type}]."${fieldObject.title}" linkRule: `, linkRule )
         const opExpr_fob = schemaFieldObjects[op.expression[0]], opRelExpr_fob = schemaFieldObjects[op.relationExpression[0]]
         // assert( opExpr_fob,    `${debugInfo} - op.expression fieldId not found in schemaFieldObjects: ${opExpr_fob}` )
         // assert( opRelExpr_fob, `${debugInfo} - op.relationExpression fieldId not found in schemaFieldObjects: ${opRelExpr_fob}` )
@@ -159,9 +160,16 @@ function findLinkExpressionFields( targetType, ourType ) {
             if ( !otherField ) return false
             return otherField.holderType===ourType
         })
-        // If there is more than one matching linkRule then we are stuck, because we can't tell which is the right one :-(
-        assert(matched.length===1, `❌findLinkExpressionField: found ${matched.length} matches: [${targetType}] => [${ourType}] )`)
-        const resultFieldObject = matched[0]
+        let  resultFieldObject
+        // If there are two matching linkRules linking the same type, it's OK because that is a single self-relation
+        if ( matched.length===2 && matched[0].holderType===matched[1].holderType ) {
+            // resultFieldObject = matched[0].isReadOnly ? matched[1] : matched[0]
+            resultFieldObject = matched[1]
+        } else {
+            // Else if there are >1 matching Rules then we are stuck, because we can't tell which is the right one :(
+            assert(matched.length===1, `❌findLinkExpressionField: found ${matched.length} matches: [${targetType}] => [${ourType}] )`)
+            resultFieldObject = matched[0]
+        }
         dbg && dbg(`🔗findLinkExpressionField( [${targetType}] => [${ourType}] ) : "${resultFieldObject.title}"`)
         return linkRuleFields(resultFieldObject)
     })
@@ -194,7 +202,6 @@ class EntityProxy {
 
     // Set a field value
     setField( fieldObject, value, isClone=null ) {
-        //TODO: If this field is part of a linkRule, we need to make sure value is from a clone and not a template entity ?? e.g. it might be a PublicId value
         const fieldName = fieldObject.title
         assert( !fieldObject.isReadOnly, `❌[${fieldObject.holderType}] setField( "${fieldName}", ${isClone} ) - isReadOnly` )
         if ( value && value['Id'] ) value = value.Id
@@ -208,27 +215,32 @@ class EntityProxy {
     addToCollection( fieldObject, children, isClone=null ) {
         const collecType    = fieldObject.type, collecName = fieldObject.title
         const collection    = this.collections[collecName] = this.collections[collecName] || []
-        const addRef        = !(isClone || fieldObject.typeObject.isEnum || collecType==='fibery/user')
-        dbg && dbg( `  addToCollection( "${fieldObject.title}", ${JSON.stringify(children)}, ${isClone} )  [${this.key}] / ${addRef}` )
         if ( typeof children==='string' ) children = [{Id: children}]
         for( const {Id} of children ) {
+            const addRef    = !(isClone || fieldObject.typeObject.isEnum || collecType==='fibery/user')
+            dbg && dbg( `  addToCollection( "${fieldObject.title}", ${JSON.stringify(children)}, ${isClone} )  [${this.key}] / ${addRef}` )
             collection.push(Id)
-            if ( addRef ) this.addReference(collecType, Id, collecName, collection.length - 1)
+            if ( addRef ) this.addReference(collecType, Id, collecName, collection.length-1)
         }
     }
 
-    // Find and set the appropriate field in targetEntity to make it auto-link to this entity.
+    // Find and set the appropriate simple field in targetEntity to make it auto-link to this entity.
     // Note that if there is more than one auto-linking relation between these two types, we're stuck.
     setTargetAutoLinkField(ourRelationFieldObject, targetEntity) {
-        const ourType = ourRelationFieldObject.holderType
-        dbg && dbg(`🐠setTargetAutoLinkField [${ourType}]."${ourRelationFieldObject.title}" - "${targetEntity.Name}" ${targetEntity.Id}` )
+        dbg && dbg(`🐠setTargetAutoLinkField [${this.type}]."${ourRelationFieldObject.title}" - "${targetEntity.Name}" ${targetEntity.Id}` )
         // Find targetEntity's field that is part of a linkRule linking it to ourRelationFieldObject
-        const [targetRuleField, ourRuleField] = findLinkExpressionFields(targetEntity.type, ourType)
+        const [targetRuleField, ourRuleField] = findLinkExpressionFields(targetEntity.type, this.type)
         assert(targetRuleField, '❌setTargetAutoLinkField: null targetRuleField')
         assert(ourRuleField,    '❌setTargetAutoLinkField: null ourRuleField')
         const ourRuleFieldValue = this.fieldValue(ourRuleField)
         dbg && dbg(`  our "${ourRuleField.title}" (${ourRuleFieldValue}) => target "${targetRuleField.title}"`)
-        targetEntity.setField(targetRuleField, ourRuleFieldValue, true)
+        if ( targetRuleField.isReadOnly ) {
+            assert( !ourRuleField.isReadOnly, `❌setTargetAutoLinkField: both sides readOnly?? [${this.type}]."${ourRelationFieldObject.title}" - "${targetEntity.Name}" ${targetEntity.Id}` )
+            this.setField(ourRuleField, targetEntity.fieldValue(targetRuleField), this.isClone)
+        } else {
+            assert( !targetRuleField.isReadOnly, `❌setTargetAutoLinkField: both sides readOnly?? [${this.type}]."${ourRelationFieldObject.title}" - "${targetEntity.Name}" ${targetEntity.Id}` )
+            targetEntity.setField(targetRuleField, ourRuleFieldValue, targetEntity.isClone)
+        }
     }
 
     // Remember all references to non-clone (template) entities, so if one gets cloned
@@ -291,7 +303,7 @@ async function getExistingCloneOf( type, id ) {
     return entity.myClone               // null if entity has no clone, else Promise from fibery.create
 }
 
-// Get a template entity's existing clone, or create it
+// Return a template entity's existing clone (or create it)
 async function getOrCreateClone( type, template, context ) {
     assert( template, `getOrCreateClone: null template ⚡ ${context}` )
     dbg && dbg( `getOrCreateClone [${type}] ${template['Id']} ⚡ ${context}` )
@@ -334,9 +346,11 @@ async function cloneEntityFromTemplate({ type, subject, templateId=null, context
                 const fieldName = fieldObject.title, fieldType = fieldObject.type, fieldValue = template.entity[fieldName]
         if( ignoreField(type, fieldName) ) {
             continue
+        
         } else if ( fieldName===templateField ) {
             subject.setField( fieldObject, null )                           // A newly cloned entity should not have a Template set (could re-trigger cloning)
             continue
+        
         } else if ( fieldObject.typeObject.isEnum ) {
             if ( !fieldValue ) continue
             if ( fieldObject.cardinality===':cardinality/many-to-many' )
@@ -346,83 +360,75 @@ async function cloneEntityFromTemplate({ type, subject, templateId=null, context
             else
                 throw Error(`Unhandled Enum: [${template.key}]."${fieldName}" = "${JSON.stringify(fieldValue)}"`)
             continue
+        
         } else if ( fieldType==='comments/comment' || fieldType==='Collaboration~Documents/Reference' || fieldType==='fibery/view' ) {
-            continue                                                        // Ignore Comments
+            continue                                                        // Ignore
+        
         } else if ( fieldObject.name==='Files/Files' ) {
             subject.files = fieldValue                                      // Handled later
             continue
+        
         } else if ( fieldObject.type==='Collaboration~Documents/Document' ) {
-            // Copy Rich Text
+            // Copy Rich Text content
             const subjectSecret = subject.entity[fieldName]['Secret']
             assert( subjectSecret, `null subjectSecret: ${subject.key} . ${fieldName}` )
             promises.push(
-                (async(subjectSecret) => {
-                    const content = await fibery.getDocumentContent(fieldValue.Secret, 'json')
+                (async(subjectSecret, sourceSecret) => {
+                    const content = await fibery.getDocumentContent(sourceSecret, 'json')
                     assert( content, `null Collaboration~Documents content for [${template.key}]."${fieldName}"` )
                     fibery.setDocumentContent(subjectSecret, content, 'json')
-                })(subjectSecret))
+                })(subjectSecret, fieldValue.Secret))
             continue
-        }
-/*
-        const [ourExpresssionFieldObject, otherExpresssionFieldObject] = linkRuleFields(fieldObject)
-        // const follow = (...args) => { let o=args.shift(); while ( o instanceof Object && args.length>0 ) o = o[args.shift()]; return o }
-        if ( ourExpresssionFieldObject ) {
-            dbg && dbg( '🙏ourExpresssionFieldObject:', ourExpresssionFieldObject )
-            dbg && dbg(`🐠Auto-linked relation:`, ourExpresssionFieldObject, otherExpresssionFieldObject)
-            // dbg && dbg(`🐠Auto-linked relation: our[${follow(ourExpresssionFieldObject,'title')}] = [${follow(otherExpresssionFieldObject,'type')}].[${follow(otherExpresssionFieldObject,'title')}]`)
-            // if ( is_OneToX_relation(fieldObject) ) {
-                //TODO: handle is_OneToX_relation auto-linked on PublicId
-                // Auto-linked is_OneToX_relation: ignore this relation AND the field used for the link expression, as copying it would unlink it from the template entity
-            // }
-            ignoreField(type, ourExpresssionFieldObject.title, true)
-            continue
-        }
-*/        
-        if ( fieldObject.isCollection ) {
+        
+        } else if ( fieldObject.isCollection ) {
             if ( fieldName===templateTargetsField )
                 ignoreField(type, fieldName, true)
             else
                 collectionFields.push(fieldObject)
             continue
+        
         } else if ( fieldObject['relation'] ) {
+            if ( !fieldValue || !fieldValue.Id ) continue
+            assert( 'Id' in fieldValue, `❌Relation field [${type}]."${fieldName}" does not have Id` )
+            const linkedEntity  = await getEntityProxy(fieldType, fieldValue.Id)
+            const needClone     = is_OneToX_relation(fieldObject) || await isaTemplateEntity(fieldType, fieldValue)
+            const clone         = needClone ? await getOrCreateClone(fieldType, fieldValue, makeContext(type, subject, fieldName, fieldType, linkedEntity.Name)) : null
             if ( fieldObject.isReadOnly ) {
-                ignoreField(type, fieldName, true)
-                continue
+                // Auto-linked relation: we can't directly set the relation; set the underlying auto-link field
+                subject.setTargetAutoLinkField(fieldObject, clone || linkedEntity)
+            } else {
+                // Ordinary relation
+                subject.setField(fieldObject, needClone ? clone.Id : fieldValue.Id, needClone)
             }
-            if ( !fieldValue || !fieldValue['Id'] ) continue
-            if ( is_OneToX_relation(fieldObject) ) {
-                // We must clone the related entity, because linking it to the subject would un-link it from the template entity
-                dbg && dbg( `is_OneToX_relation: [${template.key}]."${fieldName}": `, fieldValue )
-                promises.push(
-                    (async(fieldObject, fieldValue) => {
-                        assert( fieldObject['title'], 'fieldObject.title 3' )
-                        const fieldName = fieldObject.title, fieldType = fieldObject.type
-                        const clone     = await getOrCreateClone(fieldType, fieldValue, makeContext(type, subject, fieldName, fieldType))
-                        subject.setField(fieldObject, clone.Id, true)
-                    })(fieldObject, fieldValue))
-            } else
-                subject.setField(fieldObject, fieldValue.Id)                // Not a OneToX_relation, so the linked entity can be linked to many
             continue
+        
         } else if ( fieldObject.isReadOnly ) {
             continue
+        
         } else if ( fieldName==='Name' ) {
-            subject.setField(  fieldObject, fieldValue==null ? '' : fieldValue.replace(/\s?\btemplate\b/gi, '') )    // Remove "template" from Name
+            subject.setField( fieldObject, fieldValue==null ? '' : fieldValue.replace(/\s?\btemplate\b/gi, '') )    // Remove "template" from Name
             continue
+        
         } else if ( fieldName==='Rank' ) {
-            subject.setField(  fieldObject, (fieldValue || 0) + 10000)
+            subject.setField( fieldObject, (fieldValue || 0) + 10000)
             continue
+        
         } else if ( fieldName===isTemplateField ) {
-            subject.setField(  fieldObject, false )                         // A newly cloned entity should not be a template
+            subject.setField( fieldObject, false )                                                      // A newly cloned entity should not be a template
             continue
+        
         } else if ( fieldName===rulesField ) {
-            subject.setField(  fieldObject, addUniqueSubtring(fieldValue, '[CLONE]') )  // Inform Fibery Rules that entity is (being) cloned
+            subject.setField( fieldObject, addUniqueSubtring(fieldValue, '[CLONE]') )                   // To inform Fibery Rules that this entity is (being) cloned
             continue
+
         // } else if ( isNameFieldReadOnly(type) && isTitleField(fieldObject) && fieldValue ) {
-        //     subject.setField(  fieldObject, fieldValue.replace(/\s?\btemplate\b/gi, '')+' copy' )  // If Name field is a Formula, add 'copy' to the Title field if it exists
+        //     subject.setField( fieldObject, fieldValue.replace(/\s?\btemplate\b/gi, '')+' copy' )     // If Name field is a Formula, add 'copy' to the Title field if it exists
         //     continue
+            
         } else if ( fieldObject.typeObject.isPrimitive ) {
-            subject.setField(  fieldObject, fieldValue )
+            subject.setField( fieldObject, fieldValue )
             continue
+            
         } else {
             throw Error( `Field not handled by cloneEntityFromTemplate: [${type}] "${fieldName}"` )
         }
@@ -433,7 +439,6 @@ async function cloneEntityFromTemplate({ type, subject, templateId=null, context
         const collecType = fieldObject.type, collecName = fieldObject.title, collection = template.entity[collecName]
         dbg && dbg( `Processing collection "${collecName}" [${collecType}] ⚡ ${context}`, collection )
         if ( !(collection && collection['length'] > 0) ) continue
-
         // Each child (member) of the template collection gets cloned if it's a template entity or OneToX relation,
         // else it just gets linked (copied) to the subject's collection.
         // OneToX relations must be cloned, because linking a child to the subject would un-link it from the template entity.
