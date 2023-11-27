@@ -1,5 +1,5 @@
 {
-  "name": "automations-control",
+  "name": "fibery-automations-control",
   "version": "1.0.0",
   "description": "Fibery automations remote management",
   "type": "module",
@@ -10,6 +10,7 @@
   "author": "Matt Blais <rasha808@gmail.com>",
   "license": "ISC",
   "dependencies": {
-    "ora": "^7.0.1"
+    "ora": "^7.0.1",
+    "picocolors": "^1.0.0"
   }
 }
