@@ -373,7 +373,7 @@ const dbName_from_dbId = (dbId) => Object.values(schema.types).find( t => t['fib
 // Readdir (sync, no exceptions thrown)
 function readdirSync( dir ) {
     try { return fs.readdirSync(dir) }
-    catch(err) { return null }
+    catch(err) { return [] }
 }
 
 // Readfile (sync, no exceptions thrown)
@@ -515,7 +515,7 @@ function getDbDir( space, dbId ) {
 
 // Get the cache dir for a DB and cacheType
 function getCacheDir( space, dbId, cacheType ) {
-    const dir = path.join(getDbDir(space, dbId), `.${cacheType}`)
+    const dir = path.join(getDbDir(space, dbId), `.${cacheType}-cache`)
     return maybeCreateDir(cacheType, dir)
 }
 
@@ -669,7 +669,7 @@ async function getAutomationsForType( kind, space, dbId, forceCache=null ) {
 }
 
 // Generate a script's Id comment line
-const scriptIdHeader = ( automationId, actionId ) => `//.fibery SCRIPTID=${automationId} ACTIONID=${actionId}\n`
+const scriptIdHeader = ( automationId, actionId ) => `//.fibery AUTOID=${automationId} ACTIONID=${actionId}\n`
 
 // Generate a script's git header block comment
 function scriptGitHeader( filePath ) {
@@ -731,7 +731,7 @@ function getDirTokenId( path, suffix ) {
 // Get the automation Ids from the API header comment in a script file
 function parseFileActionIds( scriptFilePath ) {
     const  fileText = readFileSync(scriptFilePath)
-    const  [, scriptId,  actionId] = fileText.match(/\/\/\.fibery\s+SCRIPTID=([-\w]+)\s+ACTIONID=([-\w]+)/) || []
+    const  [, scriptId,  actionId] = fileText.match(/\/\/\.fibery\s+AUTOID=([-\w]+)\s+ACTIONID=([-\w]+)/) || []
     return [scriptId, actionId]
 }
 
@@ -758,7 +758,7 @@ function localActionScriptPath( dbDir, automationKind, automationName, automatio
 function saveLocalActionScript( dbDir, automationKind, automation, action ) {
     const script     = action.args.script.value
     const scriptPath = localActionScriptPath(dbDir, automationKind, automation.name, automation.id, action.id)
-    logResult(`Saving:\t${scriptPath}`)
+    logResult(`Saving script:\t${scriptPath}`)
     const apiHeader  = scriptIdHeader(automation.id, action.id)
     const bareScript = deleteScriptHeaders(script)
     const newScript  = `${apiHeader}\n${bareScript}`
@@ -792,7 +792,7 @@ async function pull() {
             function processAutomations( automationKind, automations ) {
                 for (const automation of automations) {
                     ++automationsCount
-                    logVerbose(`Scanning ${automationKind}:\t${automation.name}\t${automation.id}`)
+                    logVerbose(`Scanning ${automationKind}:  \t${automation.name}\t${automation.id}`)
                     // Check each action for a script
                     for (const action of automation.actions) {
                         if (action.args?.script) {
@@ -809,7 +809,7 @@ async function pull() {
     }
 
     if      (spacesCount     ==0)   warn('No spaces were matched - check your `--space` filter.')
-    else if (typesCount      ==0)   warn('No DBs were matched - check your `--db` filter.' + options.cache ? ' Maybe try it without `--cache`.':'')
+    else if (typesCount      ==0)   warn('No DBs were matched - check your `--db` filter.' + (options.cache ? ' Maybe try it without `--cache`.':''))
     else if (automationsCount==0)   warn('No automations were matched - check your filters.')
     else if (actionsCount    ==0)   warn(`${automationsCount} automations were matched, but no script actions were found.`)
     else if (options.quiet)         log(actionsCount)
@@ -865,7 +865,7 @@ async function push() {
                             const gitHeader  = scriptGitHeader(scriptPath)
                             const bareScript = deleteScriptHeaders( expandScript(scriptPath) )
                             const newScript  = `${apiHeader}${gitHeader}\n${bareScript}`    // Add headers to script
-                            logResult(`Pushing:\t${scriptPath}`)
+                            logResult(`Pushing script:\t${scriptPath}`)
                             action.args.script.value = newScript            // Update the automation action from the local script
                             ++dirtyCount
                         }
@@ -889,7 +889,7 @@ async function push() {
     }
 
     if      (spacesCount     ==0)   warn('No spaces were matched - check your `--space` filter.')
-    else if (typesCount      ==0)   warn('No DBs were matched - check your `--db` filter.' + options.cache ? ' Maybe try it without `--cache`.':'')
+    else if (typesCount      ==0)   warn('No DBs were matched - check your `--db` filter.' + (options.cache ? ' Maybe try it without `--cache`.':''))
     else if (automationsCount==0)   warn('No automations were matched - check your filters.')
     else if (actionsCount    ==0)   warn(`${automationsCount} automations were matched, but no script actions were found.`)
     else if (options.quiet)         log(actionsCount)
@@ -901,11 +901,12 @@ async function push() {
 //
 async function purge() {
     await doSetup()
-    let purgedCount = 0
+    let purgedCount = 0, totalCount = 0
 
     // Process all cache files in dirPath
     function purgeCacheFiles( dirPath ) {
-        for (fileName of readdirSync(dirPath) || []) {
+        for (const fileName of readdirSync(dirPath)) {
+            ++totalCount
             const m         = fileName.match( /(?<year>\d\d\d\d)-(?<month>\d\d)-(?<day>\d\d) (?<hours>\d\d).(?<minutes>\d\d).(?<seconds>\d\d)\.(?<ms>\d+)\.jsonc$/ )
             if (!m) continue
             const {year, month, day, hours, minutes, seconds, ms} = m.groups
@@ -922,19 +923,19 @@ async function purge() {
 
     // Purge cache for schema and spaces
     const cacheDir = getSpaceDir(null)
-    purgeCacheFiles( path.join(cacheDir, '.schema') )
-    purgeCacheFiles( path.join(cacheDir, '.spaces') )
+    purgeCacheFiles( path.join(cacheDir, '.schema-cache') )
+    purgeCacheFiles( path.join(cacheDir, '.spaces-cache') )
 
     // Purge automation caches for each Space and DB
-    for (const space of spaces_filtered()) {
-        for (const type of dbs_filtered(space)) {
-            const dbDir = getDbDir(space, type['fibery/id'])
-            purgeCacheFiles( dbDir, '.button')
-            purgeCacheFiles( dbDir, '.rule')
+    for (const  space of spaces_filtered()) {
+        for (const db of dbs_filtered(space)) {
+            const dbDir = getDbDir(space, db['fibery/id'])
+            purgeCacheFiles( path.join(dbDir, '.button-cache') )
+            purgeCacheFiles( path.join(dbDir, '.rule-cache') )
         }
     }
     if (options.quiet)  log(purgedCount)
-    else                logResult(`${options.fake ? 'Found':'Purged'} ${purgedCount} cache files ≤ ${cacheBefore}`)
+    else                logResult(`${purgedCount} cache files ≤ ${cacheBefore} ${options.fake ? 'found to purge':'purged'}, out of a total of ${totalCount} cache files`)
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -946,11 +947,12 @@ async function orphans() {
 
     const trailingDirSep = path.sep
     const filteredSpaces = Array.from( spaces_filtered() )
-    let   totalOrphans   = 0
+    let   totalOrphans   = 0, totalObjects = 0
     const spacesDir      = path.join( domainDir, 'fibery', 'space' )
 
     // Scan all Space dirs in Workspace
     for (const spaceName of readdirSync(spacesDir).filter(dir => !dir.startsWith('.'))) {
+        ++totalObjects
         const spacePath  = path.join(spacesDir, spaceName)
         const   spaceId  = getDirTokenId(spacePath, '.space')
         if (!spaceId) {
@@ -967,9 +969,10 @@ async function orphans() {
         const dbs = Array.from(dbs_filtered(space))
 
         // Scan all DBs in the Space
-        const dbsPath = path.join(spacePath, 'database')
+        const dbsPath     = path.join(spacePath, 'database')
         for (const dbDir of readdirSync(dbsPath).filter(dir => !dir.startsWith('.'))) {
-            const  dbPath = path.join(spacePath,  dbDir)
+            ++totalObjects
+            const  dbPath = path.join(  dbsPath,  dbDir)
             const  dbId   = getDirTokenId(dbPath, '.db')
             if (!dbId) {
                 warn(`DB dir does not have an Id - ignoring:\t${dbPath}`)
@@ -989,7 +992,8 @@ async function orphans() {
             for (const kind of ['button', 'rule']) {
                 const automationsDir = path.join(dbPath, 'automations', kind)
                 for (const fileName of readdirSync(automationsDir)) {
-                    const  filePath =    path.join(automationsDir, fileName)
+                    ++totalObjects
+                    const  filePath  = path.join(automationsDir, fileName)
                     if (fileName.startsWith('.')) continue          // Ignore cache dir/file
                     if (!fileName.match(/\.js$/i)) {
                         warn(`Unexpected filename - ignoring:\t"${filePath}"`)
@@ -1011,7 +1015,7 @@ async function orphans() {
     }
 
     if (options.quiet)  log(totalOrphans)
-    else                logResult(`Total orphaned objects: ${totalOrphans}`)
+    else                logResult(`Found ${totalOrphans} orphaned objects of ${totalObjects} total objects`)
 }
 
 
@@ -1022,10 +1026,10 @@ async function main() {
     parseCommandLineOptions()
     dbg(`${thisScriptName} ${positionals.join(' ')}\t${JSON.stringify(options)}`)
     let cmd = positionals.shift()?.toLowerCase()
-    if (cmd?.match(/pull|push|purge/))  myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${cmd}\` command.`)
-    if (cmd!=='help')                   myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
-    if (cmd!=='push')                   myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
-    if (options.nofiles)                myAssert(options.cache,          '`--nofiles` requires specifying the `--cache` option')
+    if (cmd?.match(/pull|push/))    myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${cmd}\` command.`)
+    if (cmd!=='help')               myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
+    if (cmd!=='push')               myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
+    if (options.nofiles)            myAssert(options.cache,          '`--nofiles` requires specifying the `--cache` option')
 
     switch (cmd || '')
     {
@@ -1039,6 +1043,7 @@ async function main() {
             
         case 'purge':
             myAssert( options.before, `\`${cmd}\` requires the \`--before\` option to specify the cutoff date (cache files older than this will be deleted).`)
+            if (!(options.button||options.rule)) warn(`Warning: specify \`--button=/\` and \`--rule=/\` options if you want to purge their cache files.`)
             await purge()
             break
                 
