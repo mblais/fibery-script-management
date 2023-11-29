@@ -1,0 +1,16 @@
+{
+  "name": "fibery-script-management",
+  "version": "0.1.0",
+  "description": "Remote script management for Fibery.io automations",
+  "type": "module",
+  "main": "fibscripts.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "author": "Matt Blais",
+  "license": "ISC",
+  "dependencies": {
+    "ora": "^7.0.1",
+    "picocolors": "^1.0.0"
+  }
+}
