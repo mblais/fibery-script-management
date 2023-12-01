@@ -134,11 +134,15 @@ function help( cmd ) {
 
         case '':
             log(`
-${thisScriptName} - Manage Fibery automation scripts locally
+${thisScriptName} - Manage Fibery automation scripts locally, using UNDOCUMENTED Fbery.io API calls
 
-Usage:  ${thisScriptName}  { pull | push | purge | orphans | help {cmd} }  [ options... ]
+OVERVIEW
+
+This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and update automation scripts (Javascript) in your Fibery.io Button and Rule automations. This allows you to write and manage your Fibery scripts locally with familiar tools (including source control).
 
 COMMANDS:
+
+Usage:  ${thisScriptName}  { pull | push | purge | orphans | help {cmd} }  [ options... ]
 
     help [cmd]            Show help, optionally for a specific program command
     pull                  Download and save Fibery workspace Button and Rule Javascript actions
@@ -722,7 +726,7 @@ function expandScript( scriptPath ) {
     return result
 }
 
-// Get Space/DB Id from directory token file
+// Get a Space/DB Id from its token file
 function getDirTokenId( path, suffix ) {
     const  tokenFilename = readdirSync(path)?.find( name => name.endsWith(suffix) )
     return tokenFilename?.replace(/^\.?([-\w]+)\.\w*/, '$1')
@@ -1053,8 +1057,7 @@ async function main() {
 
         case '':
             if (options.validate) {
-                const apiKey = process.env['FIBERY_API_KEY']?.replace(/./g, '*') ?? 'undefined'
-                warn(`FIBERY:\t${process.env['FIBERY']}\nFIBERY_DOMAIN:\t${process.env['FIBERY_DOMAIN']}\nFIBERY_API_KEY:\t${apiKey}`)
+                warn(`FIBERY:\t${process.env['FIBERY']}\nFIBERY_DOMAIN:\t${process.env['FIBERY_DOMAIN']}\nFIBERY_API_KEY:\t${process.env['FIBERY_API_KEY']}`)
             } else
                 help()
             returnCode = process.env['FIBERY'] && process.env['FIBERY_DOMAIN'] && process.env['FIBERY_API_KEY'] ? 0:1
