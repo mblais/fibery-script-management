@@ -20,13 +20,13 @@ let   workspace, schema, spaces
 let   cacheAfter, cacheBefore
 let   returnCode        = 0                             // Program return code
 let   debug             = false
+let   spinner
+let   useSpinner        = !process.env.IN_DEBUGGER
 const warned            = {}                            // Don't repeat identical warnings
 
 //---------------------------------------------------------------------------------------------------
 //  Helper functions
 
-const {log}             = console
-const dbg               = (...args) => { if (debug) console.debug(pc.white(pc.dim(...args))) }
 const debugBreak        = ()  => { if (debug) debugger }
 function timestamp()    { return new Date(...arguments).toLocaleString('sv', {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric', fractionalSecondDigits: 3}).replace(',', '.') }
 const startTimestamp    = timestamp()
@@ -37,16 +37,56 @@ const stringify         = (...args) => args.map( (a) =>
         a.toString()
     ).join(' ')
 
+function stopSpinner( funcName=null ) { 
+    if (spinner) {
+        if (funcName && spinner.text && spinner.isSpinning)
+            spinner[funcName](spinner.text)         // Keep current spinner message
+        else if (spinner.text)
+            spinner.stopAndPersist({symbol: ''})
+        else
+            spinner.stop()
+    }
+    if (useSpinner) spinner = ora({stream: process.stdout})
+}
+
+function log(...args) {
+    if (useSpinner) {
+        stopSpinner()
+        spinner.start( stringify(...args) )
+    }
+    else console.log(...args)
+}
+
+function dbg(...args) {
+    if (!debug) return
+    const msg = pc.dim(pc.white(stringify(...args)))
+    if (useSpinner) {
+        stopSpinner()
+        spinner.start( msg )
+    } 
+    else console.info(msg)
+}
+
 function error(...args) {
     const err = args[0]
     if (err?.stdout?.toString) err.stdout = err.stdout.toString()
     if (err?.stderr?.toString) err.stderr = err.stderr.toString()
+    stopSpinner()
     console.error(pc.red(`${appName}: ${stringify(...args)}`))
     debugBreak()
     process.exit(returnCode || 1)
 }
-const warn              = (...args)             => { const msg=args[0]; if (!warned[msg]) {warned[msg]=1; console.warn(pc.yellow(stringify(...args)))} }
+
+function warn(...args) {
+    const msg = args[0]
+    if (warned[msg]) return
+    warned[msg] = 1
+    stopSpinner()
+    spinner.warn( pc.yellow(stringify(...args)) )
+}
+
 const logResult         = (...args)             => { if (!options.quiet  ) log(pc.green  (stringify(...args))) }
+const logResultRed      = (...args)             => { if (!options.quiet  ) log(pc.red    (stringify(...args))) }
 const logVerbose        = (...args)             => { if ( options.verbose) log(pc.magenta(stringify(...args))) }
 const myAssert          = (condition, msg)      => { if (!condition) error(msg) }       // When we don't want a stack trace
 const delay             = async (ms)            => new Promise((resolve) => setTimeout(resolve, parseInt(ms)))
@@ -372,16 +412,8 @@ async function fiberyFetch( address, method, body=null ) {
     try {
         if (options.fake && method==='PUT') return null
         await delay(options.delay)
-        if (options.quiet) {
-            // No spinner
-            response      = await fetch(url, payload)
-        } else {
-            // Spinner
-            const spinner = ora(options.verbose ? `${method} ${url}` : '').start()
-            response      = await fetch(url, payload)
-            if (options.verbose)  spinner.succeed()           // Stop spinner but keep the message
-            else                  spinner.stop()              // Delete the entire spinner line
-        }
+        // if (!options.quiet) log(options.verbose ? `${method} ${url}` : '')
+        response = await fetch(url, payload)
         if (response?.status==200) return response.json()
         error(`${response?.status}: ${response?.statusText}\n${url}`)
     } catch (err) {
@@ -897,20 +929,20 @@ async function validate() {
         for (const type of dbs_filtered(space)) {
             ++typesCount
             const dbId = type['fibery/id'], dbName = type['fibery/name'], dbDir = getDbDir(space, dbId)
-            logVerbose(`Scanning DB:    \t${dbName}\t${dbId}`)
+            logVerbose(`Scanning   DB:    \t${dbName}\t${dbId}`)
 
             // Get automation actions for Buttons or Rules from Fibery
             function processAutomations( automationKind, automations ) {
                 for (const automation of automations) {
                     ++automationsCount
-                    logVerbose(`Scanning ${Capitalize(automationKind)}:  \t${automation.name}\t${automation.id} ${isAutomationEnabled(automation) ? '{E}' : '{D}'}`)
+                    logVerbose(`Scanning     ${Capitalize(automationKind)}:  \t${automation.name}\t${automation.id} ${isAutomationEnabled(automation) ? '{E}' : '{D}'}`)
                     actionsCount  += automation.actions.length
                     problemsCount += validateAutomation(dbName, automationKind, automation)
                 }
             }
 
-            const buttons   = await getDBAutomations('button', space, dbId, false)  // no cache
-            const rules     = await getDBAutomations('rule',   space, dbId, false)  // no cache
+            const buttons   = await getDBAutomations('button', space, dbId)
+            const rules     = await getDBAutomations('rule',   space, dbId)
             processAutomations( 'button', buttons_filtered(buttons))
             processAutomations( 'rule',     rules_filtered(rules  ))
         }
@@ -943,14 +975,14 @@ async function pull() {
         for (const type of dbs_filtered(space)) {
             ++typesCount
             const dbId = type['fibery/id'], dbName = type['fibery/name'], dbDir = getDbDir(space, dbId)
-            logVerbose(`Scanning DB:    \t${dbName}\t${dbId}`)
+            logVerbose(`Scanning   DB:    \t${dbName}\t${dbId}`)
 
             // Get automation actions for Buttons or Rules from Fibery
             function processAutomations( automationKind, automations ) {
                 for (const automation of automations) {
                     ++automationsCount
                     validateAutomation(dbName, automationKind, automation)
-                    logVerbose(`Scanning ${Capitalize(automationKind)}:  \t${automation.name}\t${automation.id} ${isAutomationEnabled(automation) ? '{E}' : '{D}'}`)
+                    logVerbose(`Scanning     ${Capitalize(automationKind)}:  \t${automation.name}\t${automation.id} ${isAutomationEnabled(automation) ? '{E}' : '{D}'}`)
                     // Check each action for a script
                     for (const action of automation.actions) {
                         if (!isAScriptAction(action)) continue
@@ -984,12 +1016,12 @@ async function push() {
     let spacesCount=0, typesCount=0, automationsCount=0, actionsCount=0
     for (const space of spaces_filtered(workspace)) {
         ++spacesCount
-        logVerbose(    `Scanning Space:\t${space.name}\t${space.id}` )
+        logVerbose(`Scanning Space:\t${space.name}\t${space.id}`)
 
         // Process all matching Types
         for (const type of dbs_filtered(space)) {
             ++typesCount
-            logVerbose(`Scanning DB:\t${type['fibery/name']}\t${type['fibery/id']}`)
+            logVerbose(`Scanning   DB:\t${type['fibery/name']}\t${type['fibery/id']}`)
             const dbId  = type['fibery/id']
             const dbDir = await getDbDir(space, dbId)
 
@@ -1004,7 +1036,7 @@ async function push() {
                         dirtyCount  = 0                             // Don't update any actions in this automation
                         break
                     }
-                    logVerbose(`Scanning ${Capitalize(automationKind)}:\t${automation.name}\t${automation.id} ${isAutomationEnabled(automation) ? '{E}' : '{D}'}`)
+                    logVerbose(`Scanning     ${Capitalize(automationKind)}:\t${automation.name}\t${automation.id} ${isAutomationEnabled(automation) ? '{E}' : '{D}'}`)
                     let dirtyCount = 0                                      // How many actions found to update in current automation?
                     if (options.nofiles) {
                         // When --nofiles is specified, push entire cached automation definitions, IGNORING LOCAL SCRIPT FILES
@@ -1106,7 +1138,7 @@ async function purge() {
 //  Orphans: List local Spaces/DBs/Automations no longer existing in the Fibery Workspace
 //
 async function orphans() {
-    myAssert(!options.button && !options.rule, 'The `orphans` command does not use the `--rule` or `--button` options.')
+    myAssert(!options.button && !options.rule && options.db==='*', 'The `orphans` command does not use the `--db`, `--rule` or `--button` options.')
     await doSetup()
 
     const trailingDirSep = path.sep
@@ -1115,10 +1147,11 @@ async function orphans() {
     const spacesDir      = path.join( domainDir, 'fibery', 'space' )
 
     // Scan all Space dirs in Workspace
-    for (const spaceName of readdirSync(spacesDir).filter(dir => !dir.startsWith('.'))) {
+    for (const spaceName of readdirSync(spacesDir).filter(makeFilter(options.space))) {
         ++totalObjects
         const spacePath  = path.join(spacesDir, spaceName)
         const   spaceId  = getDirTokenId(spacePath, '.space')
+        logVerbose(`Scanning Space:\t${spacePath}\t${spaceId}` )
         if (!spaceId) {
             warn(`Space dir does not have an Id - ignoring:\t${spacePath}`)
             ++totalOrphans
@@ -1126,7 +1159,7 @@ async function orphans() {
         }
         const space = filteredSpaces.find(s => s.id===spaceId)
         if (!space) {
-            logResult(`Orphaned Space:\t${spacePath + trailingDirSep}`)
+            logResultRed(`Orphaned Space:\t${spacePath + trailingDirSep}`)
             ++totalOrphans
             continue
         }
@@ -1138,6 +1171,7 @@ async function orphans() {
             ++totalObjects
             const  dbPath = path.join(  dbsPath,  dbDir)
             const  dbId   = getDirTokenId(dbPath, '.db')
+            logVerbose(`Scanning   DB:\t\t${dbPath}\t${dbId}`)
             if (!dbId) {
                 warn(`DB dir does not have an Id - ignoring:\t${dbPath}`)
                 ++totalOrphans
@@ -1145,33 +1179,34 @@ async function orphans() {
             }
             const db = dbs.find( d => d['fibery/id']===dbId )
             if (!db) {
-                logResult(`Orphaned DB:\t${dbPath + trailingDirSep}`)
+                logResultRed(`Orphaned DB:\t${dbPath + trailingDirSep}`)
                 ++totalOrphans
                 continue
             }
             const buttons = Array.from( await getDBAutomations('button', space, dbId, false) )   // NOT filtered, possibly cached
             const rules   = Array.from( await getDBAutomations(  'rule', space, dbId, false) )   // NOT filtered, possibly cached
 
-            // Scan all files in DB dirs for orphaned scripts
-            for (const kind of ['button', 'rule']) {
-                const automationsDir = path.join(dbPath, 'automations', kind)
+            // Scan all dirs and files in DB dirs for orphaned scripts
+            for (const automationKind of ['button', 'rule']) {
+                const  automationsDir = path.join(dbPath, 'automations', automationKind)
                 for (const fileName of readdirSync(automationsDir)) {
                     ++totalObjects
                     const  filePath  = path.join(automationsDir, fileName)
                     if (fileName.startsWith('.')) continue          // Ignore cache dir/file
                     if (!fileName.match(/\.js$/i)) {
-                        warn(`Unexpected filename - ignoring:\t"${filePath}"`)
+                        warn(`Unexpected file type - ignoring:\t"${filePath}"`)
                         continue
                     }
                     const [scriptId, actionId] = parseFileActionIds(filePath)
+                    logVerbose(`Scanning     ${Capitalize(automationKind)}:  \t${fileName}\t${scriptId}\t${actionId}`)
                     if (!scriptId || !actionId) {
                         warn(`Did not find valid Id comment in script - ignoring:\t${filePath}`)
                         continue
                     }
-                    const action = findActionInAutomations( kind==='button' ? buttons : rules, scriptId, actionId )
+                    const action = findActionInAutomations( automationKind==='button' ? buttons : rules, scriptId, actionId )
                     if (!action) {
                         ++totalOrphans
-                        logResult(`Orphaned script:\t${filePath}`)
+                        logResultRed(`Orphaned script:\t${filePath}`)
                     }
                 }
             }
@@ -1179,7 +1214,7 @@ async function orphans() {
     }
 
     if (options.quiet)  log(totalOrphans)
-    else                logResult(`Found ${totalOrphans} orphaned objects of ${totalObjects} total objects`)
+    else                logResult(`Found ${totalOrphans} orphaned objects of ${totalObjects} scanned`)
 }
 
 
@@ -1195,6 +1230,10 @@ async function main() {
     if (cmd!=='push')               myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
     if (cmd!=='pull')               myAssert(!options.noclobber,     '`--noclobber` option can only be used with the `pull` command')
     if (options.nofiles)            myAssert(options.cache,          '`--nofiles` is only valid with the `--cache` option')
+    if (cmd && cmd!=='help' && useSpinner) {
+        stopSpinner()
+        spinner.start()
+    }    
     switch ( options.validate ? '' : (cmd ?? '') )
     {
         case 'pull':
@@ -1235,4 +1274,4 @@ async function main() {
 
 main()
     .catch((err) => error(err) )
-    .finally( () => process.exit(returnCode) )
+    .finally(()  => { stopSpinner(); process.exit(returnCode) })
