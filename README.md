@@ -6,15 +6,14 @@ This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and upda
 
 ## COMMANDS
 
-Usage:  fibscripts  { pull | push | purge | orphans | help {cmd} }  [ options... ]
-
     help [cmd]            Show help, optionally for a specific program command
     pull                  Download and save Fibery workspace Button and Rule Javascript actions
     push                  Push local Javascript Button and Rule actions back to Fibery workspace
     purge --before {date} Delete cache entries older than the specified cutoff date
     orphans               List orphaned local files and dirs that were deleted in Fibery
+    validate              Check automations for valid structure
 
-## OPTIONS (can appear anywhere on the command line)
+## OPTIONS: (can appear anywhere on the command line)
 
     --workspace   -w      The Fibery workspace domain, e.g. "my.fibery.io" - or, the full path to the local workspace dir
     --space       -s      Space   name filter
@@ -22,15 +21,18 @@ Usage:  fibscripts  { pull | push | purge | orphans | help {cmd} }  [ options...
     --button      -b      Button  name filter
     --rule        -r      Rule    name filter
     --cache       -c      Use existing cached Space/DB info instead getting it from Fibery
+    --noclobber   -n      Don't overwrite any existing local scripts (used with pull)
+    --enable      -e      Use option value of y/n to enable/disable automations
     --nogit       -g      Don't try to use git (when your local script files are not tracked in git)
-    --nofiles             Ignore local script files; use with `push` to restore automations from cache files
+    --nofiles             Ignore local script files; use with \`push\` to restore automations from cache files
     --yes         -y      Create/rename local files/directories as needed for pull operations
     --fake        -f      Dry run - don't actually update or overwrite anything
+    --delay       -l      Delay in ms to wait before every Fibery API call
+    --quiet       -q      Disable progress messages and spinners; only output a terse summary or count
     --verbose     -v      Verbose output
     --debug       -u      Debug output
-    --quiet       -q      Disable progress messages and spinners; only output a terse summary
-    --before {date-time}  End of range for cache files (matches before OR EQUAL)
-    --after  {date-time}  Start of range for cache files
+    --before {date-time}  End of date range for cache files (matches before OR EQUAL)
+    --after  {date-time}  Start of date range for cache files
 
 ## REQUIRED ENVIRONMENT VARIABLES
 
@@ -87,43 +89,41 @@ Some cache directories and housekeeping files are also created throughout the fi
 
 ## CACHING
 
-The result of every Fibery API call that returns part of the Workspace is stored in a local cache file or directory beginning with a period. These cached API results can be reused by the program instead of re-querying the Fibery API by specifying the `--cache` option. This can save time especially if you have many Spaces and DBs and automations to process.
+The result of every Fibery API query that returns part of the Workspace is stored in a local cache file or directory that begins with a period. These cached API results can be reused by the program instead of re-querying Fibery by specifying the \`--cache\` option. This can save time especially if you have many Spaces and DBs and automations.
 
 These cache files also serve as backups, since they contain the complete definitions of all automations pulled from Fibery (not just the actual scripts).
 
-Old cache files are not automatically deleted; Use the `purge` program command to trim them.
+Old cache files are not automatically deleted; Use the \`purge\` program command to trim them.
 
-When the `--cache` option is specified without any dates, the most recent cache files will be used. If you want the program to use different (earlier) cache files, specify a date range with the `--before` and `--after` options. A cache file's filename encodes its creation date+time, and this is used to find the most recent cache files within the date range specified by `--before` and `--after`. When a date range is specified, the program will always use the most recent cache files found within that range.
+When the \`--cache\` option is specified without any dates, the most recent cache files will be used. If you want the program to use different (earlier) cache files, specify a date range with the \`--before\` and \`--after\` options. A cache file's filename encodes its creation date+time, and this is used to find the most recent cache files within the date range specified by \`--before\` and \`--after\`. When a date range is specified, the program will always use the most recent cache files found within that range.
 
 ## SCRIPT MACROS
 
-The program includes a simple macro feature to allow local script files to "include" other local files (think the C preprocessor). Macros are processed recursively, so they can include other macros.
+A simple macro feature allows your local script files to "include" other source files. Macros are expanded recursively, so they can include other macros.
 
-Within a script file, including another source file is accomplished by specifying its path in a single-line comment of the form:
-
+Within a script file, including the content of a different source file is accomplished by specifying its path in a single-line comment of the form:
     //+include <path>
 
-This directs the program to insert the file specified by `<path>` before the next line. Macro comments must start at the beginning of a line with no preceding whitespace.
-    
-If the `<path>` begins with the "@" symbol, the "@" is replaced with the current FIBERY_DOMAIN directory path.
+This directs the program to insert the file specified by <path> before the next line. The comment must start at the beginning of a line (no preceding whitespace).
 
-A relative path is interpreted as relative to the directory of the file currently being processed; that could be a macro file in the case of one macro file including another.
+If the <path> begins with the "@" symbol, the "@" is replaced with the current FIBERY_DOMAIN directory path.
+
+A relative path is interpreted relative to the directory of the file currently being processed; that could be a macro file in the case of one macro file including another.
 
 Immediately after the inserted macro content the program will add a corresponding macro-end comment line of the form:
-
     //-include <path>
 
 When adding a macro-inclusion comment in a script file, you do not need to incude the corresponding macro-end comment line; the program will insert it.
 
-When a local script file is `pushed` to Fibery, each macro block within a source file (i.e. the lines between `//+include` and `//-include`, if present) is replaced with the current content of the referenced macro file.
+When a local script file is \`pushed\` to Fibery, each macro block within a source file (i.e. the lines between \`//+include\` and \`//-include\`, if present) is replaced with the current content of the referenced macro file.
 
-When pulling script files from Fibery, any macro content and comments will be left untouched, so after a `pull` operation your local script files will reflect what is actually on the server. But each time a local script file gets `pushed` back to your Fibery workspace, all its macro blocks will first be replaced by the current macro files' content.
+When pulling script files from Fibery, any macro content and comments will be left untouched, so after a \`pull\` operation your local script files will reflect what is actually on the server. But each time a local script file gets \`pushed\` back to your Fibery workspace, all its macro blocks will first be replaced by the current macro files' content.
 
 ## PROGRAM COMMANDS IN DETAIL
 
 ### fibscripts pull
 
-Download and save Fibery workspace Button and Rule Javascript actions. This will OVERWRITE existing local script files, so you make sure you've committed any local changes before doing a pull.
+Download and save Fibery workspace Button and Rule Javascript actions. This will OVERWRITE existing local script files, so make sure you've committed any local changes before doing a pull.
 
 Use the filter options to limit what Spaces/DBs/Buttons/Rules will be retrieved:
 
@@ -136,7 +136,7 @@ Use the filter options to limit what Spaces/DBs/Buttons/Rules will be retrieved:
 
 Push local Javascript Button and Rule actions back to Fibery workspace. This will OVERWRITE Fibery script actions, so make sure the curent Workspace scripts are backed up. A `pull --fake` command (without `--cache`) will download the current Workspace scripts to local cache; `--fake` prevents overwriting your lcoal script files.
 
-If the `--nofiles` option is specified, local Button and Rule script source files will be ignored, and their cached definitions will be pushed instead. In this case not only the actions will be pushed but also the complete cached automation definitions. This allows restoring complete Button/Rule definitions from old cached versions.
+If the `--nofiles` option is specified, local Button and Rule script source files will be ignored, and their cached definitions will be pushed instead. In this case not only action scripts will be pushed but also the complete cached automation definitions. This allows restoring complete Button/Rule definitions from old cached versions.
 
 Use the filter options to limit what Spaces/DBs/Buttons/Rules will be updated:
 
@@ -164,19 +164,29 @@ You can use these filter options to limit which local Space/DB dirs will be chec
 
     --space       -s    Space   name filter
     --db          -d    DB      name filter
-    --button      -b    Button  name filter
-    --rule        -r    Rule    name filter
+
+### fibscripts validate
+
+    Test automations for valid structure.
+
+    You can use these filter options to limit which automations will be checked:
+        --space       -s    Space   name filter
+        --db          -d    DB      name filter
+        --button      -b    Button  name filter
+        --rule        -r    Rule    name filter
 
 ## EXAMPLES
 
-    fibscripts  pull -b/ -r/                             # Pull ALL local Button and Rule scripts from Fibery, overwriting local script files
+    fibscripts  pull -b/ -r/                             # Pull ALL Button and Rule scripts from Fibery, overwriting existing local script files
+    fibscripts  pull -b/ -r/ --noclobber                 # Pull Button and Rule scripts from Fibery, but don't overwrite any existing local script files
+    fibscripts  pull -b/ -r/                             # Pull Button and Rule scripts from Fibery that don't already exist locally
     fibscripts  push -r/ -b/                             # Push ALL local Button and Rule scripts to Fibery, overwriting current Workspace scripts
-    fibscripts  pull --space=test\* -b/                  # Pull Button scripts only from Spaces beginning with "test"
-    fibscripts  pull --space='!/^test|^foo' -r/          # Pull Rule scripts only from Fibery Spaces NOT beginning with "test" or "foo"
+    fibscripts  pull --space=test\* -b/                  # Pull all Button scripts from Spaces beginning with "test"
+    fibscripts  pull --space='!/^test|^foo' -r/          # Pull all Rule scripts from Fibery Spaces NOT beginning with "test" or "foo"
     fibscripts  pull --rule='/test|foo'                  # Pull Rule scripts from all Rules with names containing "test" or "foo"
     fibscripts  push --space='test*' -b/                 # Push all Button scripts in Spaces beginning with "test"
-    fibscripts  push --db=bar -b'/test|foo'              # Push Button scripts for Buttons containing "test" or "Foo" in the Bar DB of any Space
+    fibscripts  push --db=bar -b'/test|foo'              # Push Button scripts for Buttons containing "test" or "Foo" in the "Bar" DB of any Space
     fibscripts  push --nofiles --before 2023-01-30 -b/   # Push cached Button definitions from latest cache files ≤ 2023-01-30
     fibscripts  purge --before 2023-01-30                # Delete local cache files created ≤ 2023-01-30
     fibscripts  orphans                                  # Find all "orphaned" local files and dirs that no longer correspond to the Fibery Workspace
-    fibscripts  help pull                                # Show help for the `pull` command
+    fibscripts  validate -b\* -r\*                       # Check all automations for valid structure

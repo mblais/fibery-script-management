@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // fibscripts.js - Manage Fibery Automation Scripts Remotely
 //---------------------------------------------------------------------------------------------------
+// git push -u origin main
 
 import   childProcess    from 'node:child_process'
 import   assert          from 'node:assert/strict'
@@ -199,7 +200,7 @@ This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and upda
 
 COMMANDS:
 
-Usage:  ${appName}  { pull | push | purge | orphans | help {cmd} }  [ options... ]
+Usage:  ${appName}  { pull | push | purge | orphans | validate | help {cmd} }  [ options... ]
 
     help [cmd]            Show help, optionally for a specific program command
     pull                  Download and save Fibery workspace Button and Rule Javascript actions
@@ -331,7 +332,7 @@ EXAMPLES
         case 'pull':
             log(`
 ${appName} pull
-    Download and save Fibery workspace Button and Rule Javascript actions. This will OVERWRITE existing local script files, so you make sure you've committed any local changes before doing a pull.
+    Download and save Fibery workspace Button and Rule Javascript actions. This will OVERWRITE existing local script files, so make sure you've committed any local changes before doing a pull.
 
     Use the filter options to limit what Spaces/DBs/Buttons/Rules will be retrieved:
         --noclobber   -n    Don't overwrite any existing local script files
@@ -347,7 +348,7 @@ ${appName} pull
 ${appName} push
     Push local Javascript Button and Rule actions back to Fibery workspace. This will OVERWRITE Fibery script actions, so make sure the curent Workspace scripts are backed up. A \`pull --fake\` command (without \`--cache\`) will download the current Workspace scripts to local cache; \`--fake\` prevents overwriting your lcoal script files.
 
-    If the \`--nofiles\` option is specified, local Button and Rule script source files will be ignored, and their cached definitions will be pushed instead. In this case not only the actions will be pushed but also the complete cached automation definitions. This allows restoring complete Button/Rule definitions from old cached versions.
+    If the \`--nofiles\` option is specified, local Button and Rule script source files will be ignored, and their cached definitions will be pushed instead. In this case not only action scripts will be pushed but also the complete cached automation definitions. This allows restoring complete Button/Rule definitions from old cached versions.
 
     Use the filter options to limit what Spaces/DBs/Buttons/Rules will be updated:
         --space       -s    Space   name filter
