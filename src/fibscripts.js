@@ -217,9 +217,9 @@ OPTIONS: (can appear anywhere on the command line)
     --db          -d      DB      name filter
     --button      -b      Button  name filter
     --rule        -r      Rule    name filter
-    --url         -u      Specify the URL of a specific Automation to operate upon
+    --url         -u      URL of a specific automation to process with pull (use instead of filters)
     --cache       -c      Use existing cached Space/DB info instead getting it from Fibery
-    --noclobber   -n      Don't overwrite any existing local scripts (used with pull)
+    --noclobber   -n      Don't overwrite any existing local scripts (used with pull/push)
     --enable      -e      Use option value of y/n to enable/disable automations
     --nogit       -g      Don't try to use git (when your local script files are not tracked in git)
     --nofiles             Ignore local script files; use with \`push\` to restore automations from cache files
@@ -263,6 +263,8 @@ FILTERS:
     If no filter is specified for a Button/Rule, NONE will be processed. So you must specify either the \`--button\` or \`--rule\` filter (or both) in order for any automations to be processed.
 
     Maximum of one filter can be defined per category (Space/DB/Button/Rule). All supplied filters must match an item for it to be processed.
+
+    Instead of using the filters to specify an automation for \`pull\` or \`push\`, you can use the \`--url\` option to specify the URL of a single Fibery Button/Rule.
 
 DIRECTORY STRUCTURE
 
@@ -1213,7 +1215,7 @@ async function main() {
     dbg(`${appName} ${positionals.join(' ')}\t${JSON.stringify(options)}`)
     command = positionals.shift()?.toLowerCase()
     if (options.url) {
-        myAssert(command==='push' || command==='pull', `The \`--url\` option is only used with the \`pull\` or \`push\` command`)
+        myAssert(command==='push' || command==='pull', `The \`--url\` option is only valid with the \`pull\` or \`push\` commands`)
         myAssert(options.space==='*' && options.db==='*' && options.button==='' && options.rule==='', `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule`)
         urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)\/actions$/ )?.groups
         myAssert(urlFilter?.fields, `\`--url\` value is not a valid Fibery automation URL: ${options.url}`)
@@ -1230,7 +1232,7 @@ async function main() {
     switch ( options.validate ? '' : (command ?? '') )
     {
         case 'pull':
-            if (options.cache) warn('Using `--cache` with `pull` will get scripts from local cache files, not Fibery - probably not what you want to do!')
+            if (options.cache) warn('Using `--cache` with `pull` will get scripts from local cache files, not from Fibery - probably not what you want to do!')
             await pull()
             break
         case 'push':

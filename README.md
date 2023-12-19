@@ -20,6 +20,7 @@ This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and upda
     --db          -d      DB      name filter
     --button      -b      Button  name filter
     --rule        -r      Rule    name filter
+    --url         -u      URL of a specific automation to process with pull/push (use instead of filters)
     --cache       -c      Use existing cached Space/DB info instead getting it from Fibery
     --noclobber   -n      Don't overwrite any existing local scripts (used with pull)
     --enable      -e      Use option value of y/n to enable/disable automations
@@ -65,6 +66,8 @@ If no filter is specified for a Space/DB, ALL Spaces/DBs will be processed.
 If no filter is specified for a Button/Rule, NONE will be processed. So you must specify either the `--button` or `--rule` filter (or both) in order for any automations to be processed.
 
 Maximum of one filter can be defined per category (Space/DB/Button/Rule). All supplied filters must match an item for it to be processed.
+
+Instead of using the filters to specify an automation for `pull` or `push`, you can use the `--url` option to specify the URL of a single Fibery Button/Rule.
 
 ## DIRECTORY STRUCTURE
 
