@@ -15,7 +15,7 @@ import   pc              from 'picocolors'              // Console colors
 //  Global vars
 
 const appName           = path.basename( process.argv[1] ).replace(/\.[^.]+$/, '')    // Name of this program file without file extension
-let   options, positionals, FIBERY, FIBERY_DOMAIN
+let   command, options, positionals, FIBERY, FIBERY_DOMAIN
 let   domainDir                                         // Dir where everything for the Fibery workspace is stored
 let   schema, spaces
 let   cacheAfter, cacheBefore
@@ -115,13 +115,14 @@ const commandLineOptions = {
     button:        { type: 'string',   short: 'b',  default: ''    },   // default: match  no Buttons
     rule:          { type: 'string',   short: 'r',  default: ''    },   // default: match  no Rules
     enable:        { type: 'string',   short: 'e',                 },
-    cache:         { type: 'boolean',  short: 'c',  default: false },
+    cache:         { type: 'boolean',  short: 'c',                 },
+    url:           { type: 'string',   short: 'u',                 },
     nogit:         { type: 'boolean',  short: 'g',  default: false },
     noclobber:     { type: 'boolean',  short: 'n',  default: false },
     fake:          { type: 'boolean',  short: 'f',  default: false },
     delay:         { type: 'string',   short: 'l',  default: '0'   },
     verbose:       { type: 'boolean',  short: 'v',  default: false },
-    debug:         { type: 'boolean',  short: 'u',  default: false },
+    debug:         { type: 'boolean',               default: false },
     quiet:         { type: 'boolean',  short: 'q',  default: false },
     yes:           { type: 'boolean',  short: 'y',  default: false },
     nofiles:       { type: 'boolean',               default: false },
@@ -216,6 +217,7 @@ OPTIONS: (can appear anywhere on the command line)
     --db          -d      DB      name filter
     --button      -b      Button  name filter
     --rule        -r      Rule    name filter
+    --url         -u      Specify the URL of a specific Automation to operate upon
     --cache       -c      Use existing cached Space/DB info instead getting it from Fibery
     --noclobber   -n      Don't overwrite any existing local scripts (used with pull)
     --enable      -e      Use option value of y/n to enable/disable automations
@@ -226,7 +228,7 @@ OPTIONS: (can appear anywhere on the command line)
     --delay       -l      Delay in ms to wait before every Fibery API call
     --quiet       -q      Disable progress messages and spinners; only output a terse summary or count
     --verbose     -v      Verbose output
-    --debug       -u      Debug output
+    --debug               Debug output
     --before {date-time}  End of date range for cache files (matches before OR EQUAL)
     --after  {date-time}  Start of date range for cache files
 
@@ -710,38 +712,64 @@ function makeFilter( pattern, field='name' ) {
              field, negate )
 }
 
-// Generate all Spaces that pass the Space name filter
-function* spaces_filtered() {
-    yield* Object.values(spaces)
-        .filter( makeFilter(options.space) )
-        .sort(  (a,b) => a.name.localeCompare(b.name) )
+// If the `--url` option is supplied, urlFilter.fields will hold the parsed url fields
+const urlFilter = {
+    fields      : {},
+    findSpace   : (spaces)  => spaces?.[ Object.keys(spaces).find( (s) => s===urlFilter.fields.space ) ],
+    findDb      : (space)   => space.types[ `${space.name}/${urlFilter.fields.db}` ],
+    findAuto    : (autos)   => autos.find( (a) => a.id===urlFilter.fields.id ),
 }
 
-// Generate all DBs in the given space that pass the DB name filter
+// Generate all Spaces that pass the Space filter
+function* spaces_filtered() {
+    if (options.url)
+        yield urlFilter.findSpace(spaces)
+    else {
+        yield* Object.values(spaces)
+            .filter( makeFilter(options.space) )
+            .sort(  (a,b) => a.name.localeCompare(b.name) )
+    }
+}
+
+// Generate all DBs in the given space that pass the DB filter
 function* dbs_filtered( space ) {
     if (!space?.types) return            // This Space has NO types/DBs defined
-    yield* Object.values(space.types)
-        .filter( makeFilter(options.db) )
-        .sort(  (a,b) => a['fibery/name'].localeCompare(b['fibery/name']) )
+    if (options.url)
+        yield urlFilter.findDb(space)
+    else {
+        yield* Object.values(space.types)
+            .filter( makeFilter(options.db) )
+            .sort(  (a,b) => a['fibery/name'].localeCompare(b['fibery/name']) )
+    }
 }
 
-// Generate all Buttons that pass the Button name filter
+// Generate all Buttons that pass the Buttons filter
 function* buttons_filtered( buttons ) {
     if (!buttons) return
-    yield* buttons
-        .filter( makeFilter(options.button) )
-        .sort(  (a,b) => a.name.localeCompare(b.name) )
+    if (options.url) {
+        if (urlFilter.fields.kind==='button')
+            yield urlFilter.findAuto(buttons)
+    } else {
+        yield* buttons
+            .filter( makeFilter(options.button) )
+            .sort(  (a,b) => a.name.localeCompare(b.name) )
+    }
 }
 
-// Generate all Rules that pass the Rules name filter
+// Generate all Rules that pass the Rules filter
 function* rules_filtered( rules ) {
     if (!rules) return
-    yield* rules
-        .filter( makeFilter(options.rule) )
-        .sort(  (a,b) => a.name.localeCompare(b.name) )
+    if (options.url) {
+        if (urlFilter.fields.kind==='rule')
+            yield urlFilter.findAuto(rules)
+    } else {
+        yield* rules
+            .filter( makeFilter(options.rule) )
+            .sort(  (a,b) => a.name.localeCompare(b.name) )
+    }
 }
 
-// Return the appropriate Fibery URL subpath for buttons or rules
+// Return the appropriate Fibery automations API subpath for buttons or rules
 const getAutomationKindSubpath = (kind) =>
     kind.match( /rule/i   ) ? 'auto-rules' :
     kind.match( /button/i ) ? 'buttons'    :
@@ -935,8 +963,8 @@ async function processFilteredAutomations( forceCache, processAutomation ) {
             ++dbsCnt
             const dbId = db['fibery/id'], dbName = db['fibery/name'], dbDir = getDbDir(space, dbId)
             logVerbose(`Scanning   DB:    \t${dbName}\t${dbId}`)
-            const buttons = buttons_filtered( await getDBAutomations('button', space, dbId, forceCache) )
-            const rules   =   rules_filtered( await getDBAutomations('rule',   space, dbId, forceCache) )
+            const buttons = buttons_filtered( await getDBAutomations('button', space, dbId, command==='pull') )
+            const rules   =   rules_filtered( await getDBAutomations('rule',   space, dbId, command==='pull') )
             for (const [automationKind, automations] of [['button', buttons], ['rule', rules]]) {
                 for (const automation of automations) {
                     ++automationsCnt
@@ -1183,26 +1211,33 @@ async function orphans() {
 async function main() {
     parseCommandLineOptions()
     dbg(`${appName} ${positionals.join(' ')}\t${JSON.stringify(options)}`)
-    let cmd = positionals.shift()?.toLowerCase()
-    if (cmd?.match(/pull|push|validate/)) myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${cmd}\` command.`)
-    if (cmd!=='help')               myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
-    if (cmd!=='push')               myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
-    if (cmd!=='pull')               myAssert(!options.noclobber,     '`--noclobber` option can only be used with the `pull` command')
-    if (options.nofiles)            myAssert(options.cache,          '`--nofiles` is only valid with the `--cache` option')
-    if (cmd && cmd!=='help' && useSpinner) {
+    command = positionals.shift()?.toLowerCase()
+    if (options.url) {
+        myAssert(command==='push' || command==='pull', `The \`--url\` option is only used with the \`pull\` or \`push\` command`)
+        myAssert(options.space==='*' && options.db==='*' && options.button==='' && options.rule==='', `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule`)
+        urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)\/actions$/ )?.groups
+        myAssert(urlFilter?.fields, `\`--url\` value is not a valid Fibery automation URL: ${options.url}`)
+    }   
+    else if (command?.match(/pull|push|validate/)) myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${command}\` command.`)
+    if (command!=='help')   myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
+    if (command!=='push')   myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
+    if (command!=='pull')   myAssert(!options.noclobber,     '`--noclobber` option can only be used with the `pull` command')
+    if (options.nofiles)    myAssert(options.cache,          '`--nofiles` is only valid with the `--cache` option')
+    if (command && command!=='help' && useSpinner) {
         stopSpinner()
         spinner.start()
     }
-    switch ( options.validate ? '' : (cmd ?? '') )
+    switch ( options.validate ? '' : (command ?? '') )
     {
         case 'pull':
+            if (options.cache) warn('Using `--cache` with `pull` will get scripts from local cache files, not Fibery - probably not what you want to do!')
             await pull()
             break
         case 'push':
             await push()
             break
         case 'purge':
-            myAssert( options.before, `\`${cmd}\` requires the \`--before\` option to specify the cutoff date (cache files older than this will be deleted).`)
+            myAssert( options.before, `\`${command}\` requires the \`--before\` option to specify the cutoff date (cache files older than this will be deleted).`)
             if (!(options.button||options.rule)) warn(`Warning: specify the \`--button=/\` and \`--rule=/\` options if you want to purge their cache files.`)
             await purge()
             break
@@ -1224,7 +1259,7 @@ async function main() {
             help( positionals.shift() )
             break
         default:
-            myAssert(false, `Unrecognized command "${cmd}"`)
+            myAssert(false, `Unrecognized command "${command}"`)
             help()
             appReturnCode = 1
             break
