@@ -67,7 +67,7 @@ If no filter is specified for a Button/Rule, NONE will be processed. So you must
 
 Maximum of one filter can be defined per category (Space/DB/Button/Rule). All supplied filters must match an item for it to be processed.
 
-Instead of using the filters to specify an automation for `pull` or `push`, you can use the `--url` option to specify the URL of a single Fibery Button/Rule.
+Instead of using the filters to specify an automation for `pull` or `push` or `validate`, you can use the `--url` option to specify the URL of a single Fibery Button/Rule.
 
 ## DIRECTORY STRUCTURE
 

@@ -38,7 +38,8 @@ const stringify         = (...args) => args.map( (a) =>
         a.toString()
     ).join(' ')
 
-const boldRed = (...args) => pc.reset(pc.bold(pc.red(...args)))
+// const boldRed = (...args) => pc.reset(pc.bold(pc.red(...args)))
+const boldRed = (...args) => pc.reset(pc.red(...args))
 
 function stopSpinner( funcName=null ) {
     if (spinner) {
@@ -110,10 +111,10 @@ const isAutomationEnabled = (a)                 => a.enabled
 
 const commandLineOptions = {
     workspace:     { type: 'string',   short: 'w',                 },
-    space:         { type: 'string',   short: 's',  default: '*'   },   // default: match all Spaces
-    db:            { type: 'string',   short: 'd',  default: '*'   },   // default: match all DBs
-    button:        { type: 'string',   short: 'b',  default: ''    },   // default: match  no Buttons
-    rule:          { type: 'string',   short: 'r',  default: ''    },   // default: match  no Rules
+    space:         { type: 'string',   short: 's',                 },   // default: match all Spaces
+    db:            { type: 'string',   short: 'd',                 },   // default: match all DBs
+    button:        { type: 'string',   short: 'b',                 },   // default: match  no Buttons
+    rule:          { type: 'string',   short: 'r',                 },   // default: match  no Rules
     enable:        { type: 'string',   short: 'e',                 },
     cache:         { type: 'boolean',  short: 'c',                 },
     url:           { type: 'string',   short: 'u',                 },
@@ -264,7 +265,7 @@ FILTERS:
 
     Maximum of one filter can be defined per category (Space/DB/Button/Rule). All supplied filters must match an item for it to be processed.
 
-    Instead of using the filters to specify an automation for \`pull\` or \`push\`, you can use the \`--url\` option to specify the URL of a single Fibery Button/Rule.
+    Instead of using the filters to specify an automation for \`pull\` or \`push\` or \`validate\`, you can use the \`--url\` option to specify the URL of a single Fibery Button/Rule.
 
 DIRECTORY STRUCTURE
 
@@ -512,7 +513,7 @@ const tokenFileName = (tokenType, id) => `.${id}.${tokenType}`
 function maybeCreateDir( type, dir, tokenFile=null ) {
     if (options.fake) return dir
     if (!isaDirectory(dir)) {
-        if (!options.yes) error(`Missing ${type} dir "${dir}" - Use the \`--yes\` option to create missing directories automatically`)
+        if (!options.yes) error(`Missing ${type} directory "${dir}" - Use the \`--yes\` option to create missing directories automatically`)
         warn(`Creating ${Capitalize(type)} dir:\t${dir}`)
         if (!options.fake) fs.mkdirSync(dir, {recursive: true})
     }
@@ -590,7 +591,7 @@ function getSpaceDir( space=null ) {
     const idealDir      = path.join(domainDir, 'fibery', 'space', fixWindowsFsChars(space.name))   // This is what the dirName should be
     const foundDir      = findSubdirByTokenFile(domainDir, tokenFile)
     return foundDir ? maybeRenameExisting('space directory', domainDir, foundDir, idealDir)
-                    : maybeCreateDir('space directory', idealDir, tokenFile)
+                    : maybeCreateDir('space', idealDir, tokenFile)
 }
 
 // Get the local dir for a DB by its Id
@@ -602,7 +603,7 @@ function getDbDir( space, dbId ) {
     const idealDir      = path.join(spaceDir, 'database', fixWindowsFsChars(dbName))  // This is what the dirName should be
     const foundDir      = findSubdirByTokenFile(spaceDir, tokenFile)
     return foundDir ? maybeRenameExisting('DB directory', spaceDir, foundDir, idealDir)
-                    : maybeCreateDir('DB directory', idealDir, tokenFile)
+                    : maybeCreateDir('DB', idealDir, tokenFile)
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -813,6 +814,7 @@ const deleteScriptHeaders = (script) => script.replace(/\/\/.fibery\s+.*[\r\n]+/
 
 // Get a script file's content, expanding any macros
 function expandScript( scriptPath ) {
+    const src               = path.basename(scriptPath)
     const script            = readFileSync(scriptPath)
     myAssert(script!=null, `Script not found: ${scriptPath}`)
     const lines             = script.split(/\r\n|\r|\n/)
@@ -820,26 +822,41 @@ function expandScript( scriptPath ) {
     // Process each script line
     for (let lineNo=0; lineNo<lines.length; lineNo++) {
         if (!lines[lineNo].startsWith('//+include ')) {
-            result          += (result ? '\n':'') + lines[lineNo]
+            // Perform macro substitutions
+            const line      = lines[lineNo].replace(/\$SRC\b/g, `"${src}:${lineNo+1}"`) + '\n'
+            // result          += (result ? '\n':'') + line
+            result          += line
             continue
         }
-        // Found a macro-start comment line
-        const macroStart    = lines[lineNo]
-        const macroEnd      = macroStart.replace('//+', '//-')                          // comment line that marks the macro end
-        let   macroPath     = macroStart.match( /\s+(.*)/ )?.[1]
+        // Found a file-inclusion-macro-start comment line
+        const includeStart  = lines[lineNo]
+        const includeEnd    = includeStart.replace('//+', '//-')                          // comment line that marks the macro end
+        let   includePath   = includeStart.match( /\s+(.*)/ )?.[1]
                             ?.trim()?.replace(/^(["'])(.*)\1$/, "$2")                   // strip quotes surrounding the macro path
-        myAssert(macroPath, `Missing macro path on line ${lineNo} of ${scriptPath}`)
-        macroPath           = fixPathSeparators( macroPath.replace(/^@/, domainDir) )   // Substitute leading "@" with domainDir
-        if (macroPath.startsWith('..'))                                                 // Interpret relative path relative to scriptPath
-            macroPath       = path.normalize(path.join(path.dirname(scriptPath), macroPath))
-        const macroContent  = expandScript(macroPath)
-        result              += (result ? '\n':'') + `${macroStart}\n${macroContent}\n${macroEnd}\n`
+        myAssert(includePath, `Missing file-include path on line ${lineNo} of ${scriptPath}`)
+        includePath         = fixPathSeparators( includePath.replace(/^@/, domainDir) )   // Substitute leading "@" with domainDir
+        if (includePath.startsWith('..'))                                                 // Interpret relative path relative to scriptPath
+            includePath     = path.normalize(path.join(path.dirname(scriptPath), includePath))
+        const includeContent= expandScript(includePath)
+        result              += (result ? '\n':'') + `${includeStart}\n${includeContent}\n${includeEnd}\n`
         // Skip over old macro content up to the macro-end line
-        const macroEndLineNo = lines.findIndex( (line) => line===macroEnd )
+        const macroEndLineNo = lines.findIndex( (line) => line===includeEnd )
         if (macroEndLineNo > -1) lineNo = macroEndLineNo
     }
     return result
 }
+
+
+// Perform macro substitutions on a script
+function macroSubstitutions( text ) {
+    let result = '', lineNo = 0
+    for (let line of text.split(/\r\n|\r|\n/)) {
+        ++lineNo
+        result += line.replace(/\b__LINE__\b/g, lineNo) + '\n'
+    }
+    return result
+}
+
 
 // Get a Space/DB Id from its token file
 function getDirTokenId( path, suffix ) {
@@ -878,7 +895,7 @@ function saveLocalActionScript( dbDir, automationKind, automation, action ) {
     const script        = action.args.script.value
     const scriptPath    = localActionScriptPath(dbDir, automationKind, automation.name, automation.id, action.id)
     if (options.noclobber && doesPathExist(scriptPath))
-        return warn(`Noclobber script:\t${scriptPath}`)
+        return warn(`Noclobber script:\t"${scriptPath}"`)
     logResult(`Saving script:\t${scriptPath}`)
     const apiHeader     = scriptIdHeader(automation.id, action.id)
     const bareScript    = deleteScriptHeaders(script)
@@ -927,7 +944,7 @@ function validateAutomation( dbName, automationKind, automation ) {
     }
     for (const action of automation.actions) {
         ++actionNum
-        const actionType        = action.action.replace(/-\w{8}-\w{4}-\w{4}-\w{4}-\w{12}(?:-template)?$/, '')
+        const actionType        = action.action.replace(/-\w{8}-\w{4}-\w{4}-\w{4}-\w{12}(?:-.*)?$/, '')
         const title             = `[${dbName}] ${Capitalize(automationKind)} "${automation.name}" action #${actionNum} (${actionType})`
         const validParams       = validActionParams[actionType] ?? myAssert(false, `${title}: unknown actionType`)
         const actionArgsKeys    = Object.keys(action.args)
@@ -965,8 +982,8 @@ async function processFilteredAutomations( forceCache, processAutomation ) {
             ++dbsCnt
             const dbId = db['fibery/id'], dbName = db['fibery/name'], dbDir = getDbDir(space, dbId)
             logVerbose(`Scanning   DB:    \t${dbName}\t${dbId}`)
-            const buttons = buttons_filtered( await getDBAutomations('button', space, dbId, command==='pull') )
-            const rules   =   rules_filtered( await getDBAutomations('rule',   space, dbId, command==='pull') )
+            const buttons = buttons_filtered( await getDBAutomations('button', space, dbId, forceCache) )
+            const rules   =   rules_filtered( await getDBAutomations('rule',   space, dbId, forceCache) )
             for (const [automationKind, automations] of [['button', buttons], ['rule', rules]]) {
                 for (const automation of automations) {
                     ++automationsCnt
@@ -1009,7 +1026,8 @@ async function validate() {
 //  Pull: Get automation script definitions from the Fibery Workspace
 //
 async function pull() {
-    const {automationsCnt, scriptActionsCnt} = await processFilteredAutomations( null,
+    const forceCache = true     // Disable caching when pulling automation scripts from Fibery, so we always get CURRENT automation definitions
+    const {automationsCnt, scriptActionsCnt} = await processFilteredAutomations( forceCache,
         ({dbDir, automationKind, automation, scriptActions}) => {
             for (const action of scriptActions)
                 saveLocalActionScript(dbDir, automationKind, automation, action)
@@ -1022,7 +1040,7 @@ async function pull() {
 //  Push: Update Fibery Workspace actions from local automation script definitions
 //
 async function push() {
-    // Always force cache usage when scanning automations to push to Fibery:
+    // Always force a specific cache mode when scanning automations to push to Fibery:
     // If '--nofiles' is true, ALWAYS get old automations FROM CACHE so we will push entire historical automation definitions;
     // otherwise NEVER use cache, so we always get CURRENT automation definitions from Fibery, then only update their action scripts.
     const forceCache         = options.nofiles
@@ -1051,6 +1069,7 @@ async function push() {
                     const gitHeader  = scriptGitHeader(scriptPath)
                     const bareScript = deleteScriptHeaders( expandScript(scriptPath) )
                     const newScript  = `${apiHeader}${gitHeader}\n${bareScript}`    // Add headers to script
+                    // const newScript  = macroSubstitutions(`${apiHeader}${gitHeader}\n${bareScript}`)    // Add headers to script and substitute macros
                     action.args.script.value = newScript
                     logResult(`Pushing action script:\t${scriptPath}`)  
                     // The automation will get pushed after all actions have been processed (below)
@@ -1060,7 +1079,7 @@ async function push() {
             if (missingActionsCnt > 0) {
                 // Don't update this automation
                 warn(`No 'push' will be done for ${Capitalize(automationKind)} "${automation.name}"`)
-                warn(`Use \`${appName} pull\` to get current action script definitions from Fibery.`)
+                warn(`Use \`${appName} pull --noclobber ...\` to get missing action script definitions from Fibery.`)
                 appReturnCode ||= 2
             } else if (scriptActionsCnt > 0) {
                 // Update this automation
@@ -1215,24 +1234,27 @@ async function main() {
     dbg(`${appName} ${positionals.join(' ')}\t${JSON.stringify(options)}`)
     command = positionals.shift()?.toLowerCase()
     if (options.url) {
-        myAssert(command==='push' || command==='pull', `The \`--url\` option is only valid with the \`pull\` or \`push\` commands`)
-        myAssert(options.space==='*' && options.db==='*' && options.button==='' && options.rule==='', `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule`)
-        urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)\/actions$/ )?.groups
+        myAssert( command?.match(/pull|push|validate/), `The \`--url\` option is only valid with the \`pull\` or \`push\` or \`validate\` commands`)
+        myAssert(!options.space && !options.db && !options.button && !options.rule, `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule`)
+        urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)(?:\/actions\/?|\/activity\/?)?$/ )?.groups
         myAssert(urlFilter?.fields, `\`--url\` value is not a valid Fibery automation URL: ${options.url}`)
     }   
-    else if (command?.match(/pull|push|validate/)) myAssert(options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both) for any automations to be processed by the \`${command}\` command.`)
-    if (command!=='help')   myAssert(positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
+    else if (command?.match(/pull|push|validate/)) myAssert(options.url||options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both), or the \`--url\` option, with the \`${command}\` command.`)
+    if (command!=='help')   myAssert( positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
     if (command!=='push')   myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
     if (command!=='pull')   myAssert(!options.noclobber,     '`--noclobber` option can only be used with the `pull` command')
-    if (options.nofiles)    myAssert(options.cache,          '`--nofiles` is only valid with the `--cache` option')
+    if (options.nofiles)    myAssert( options.cache,         '`--nofiles` is only valid with the `--cache` option')
     if (command && command!=='help' && useSpinner) {
         stopSpinner()
         spinner.start()
     }
+
+    options.space   ??= '*'     // default: match all Spaces
+    options.db      ??= '*'     // default: match all DBs
+
     switch ( options.validate ? '' : (command ?? '') )
     {
         case 'pull':
-            if (options.cache) warn('Using `--cache` with `pull` will get scripts from local cache files, not from Fibery - probably not what you want to do!')
             await pull()
             break
         case 'push':
@@ -1269,5 +1291,5 @@ async function main() {
 }
 
 main()
-    .catch((err) => error(err) )
+    .catch((err) => error(err))
     .finally(()  => { stopSpinner(); process.exit(appReturnCode) })
