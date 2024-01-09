@@ -1225,6 +1225,27 @@ async function orphans() {
     else                logResult(`Found ${totalOrphans} orphaned objects of ${totalObjects} scanned`)
 }
 
+//---------------------------------------------------------------------------------------------------
+//  Enable: enable/disable automations
+//
+async function enable() {
+    assert('enable' in options, 'expecting `--enable` option')
+    const e  = options.enable.toLowerCase()
+    const tf = (e==='1' || e==='y' || e==='yes' || e==='true'  ) ? true  :
+               (e==='0' || e==='n' || e==='no'  || e==='false' ) ? false :
+               myAssert(false, `Invalid value for \`--enable\` option: "${options.enable}"`)
+    const forceCache = null
+    const {automationsCnt} = await processFilteredAutomations( forceCache,
+        async({automationKind, automation}) => {
+            // Enable/disable the automation
+            const {id}      = automation
+            const command   = {enabled: tf}
+            await fiberyFetch(`/api/automations/${getAutomationKindSubpath(automationKind)}/${id}`, 'PUT', command)
+    })
+    const enable_disable = options.enable ? 'enable':'disable'
+    if (options.quiet) log(automationsCnt)
+    else logResult(`${automationsCnt} automations ${options.fake ? 'found to '+enable_disable : enable_disable+'d'}`)
+}
 
 //---------------------------------------------------------------------------------------------------
 //  MAIN
@@ -1233,8 +1254,9 @@ async function main() {
     parseCommandLineOptions()
     dbg(`${appName} ${positionals.join(' ')}\t${JSON.stringify(options)}`)
     command = positionals.shift()?.toLowerCase()
+    const haveWorkToDo = (command && command !== 'help') || 'enable' in options
     if (options.url) {
-        myAssert( command?.match(/pull|push|validate/), `The \`--url\` option is only valid with the \`pull\` or \`push\` or \`validate\` commands`)
+        myAssert(command?.match(/pull|push|validate/) || (!command && 'enable' in options), `The \`--url\` option is only valid with the \`pull\` or \`push\` or \`validate\` commands`)
         myAssert(!options.space && !options.db && !options.button && !options.rule, `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule`)
         urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)(?:\/actions\/?|\/activity\/?)?$/ )?.groups
         myAssert(urlFilter?.fields, `\`--url\` value is not a valid Fibery automation URL: ${options.url}`)
@@ -1244,7 +1266,7 @@ async function main() {
     if (command!=='push')   myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
     if (command!=='pull')   myAssert(!options.noclobber,     '`--noclobber` option can only be used with the `pull` command')
     if (options.nofiles)    myAssert( options.cache,         '`--nofiles` is only valid with the `--cache` option')
-    if (command && command!=='help' && useSpinner) {
+    if (haveWorkToDo && useSpinner) {
         stopSpinner()
         spinner.start()
     }
@@ -1275,6 +1297,8 @@ async function main() {
             if (options.validate)
                 warn(`${appName} ${positionals.join(' ')}\t${JSON.stringify(options)}\n` +
                     `FIBERY:\t${process.env['FIBERY']}\nFIBERY_DOMAIN:\t${process.env['FIBERY_DOMAIN']}\nFIBERY_API_KEY:\t${process.env['FIBERY_API_KEY']}`)
+            if ('enable' in options)
+                await enable()
             else
                 help()
             appReturnCode = process.env['FIBERY'] && process.env['FIBERY_DOMAIN'] && process.env['FIBERY_API_KEY'] ? 0:1
