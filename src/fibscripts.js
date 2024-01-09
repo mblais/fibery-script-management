@@ -4,7 +4,7 @@
 // git push -u origin main
 
 import   childProcess    from 'node:child_process'
-import   assert          from 'node:assert/strict'
+// import   assert          from 'node:assert/strict'
 import   path            from 'node:path'
 import   fs              from 'node:fs'
 import { parseArgs     } from 'node:util'
@@ -38,7 +38,6 @@ const stringify         = (...args) => args.map( (a) =>
         a.toString()
     ).join(' ')
 
-// const boldRed = (...args) => pc.reset(pc.bold(pc.red(...args)))
 const boldRed = (...args) => pc.reset(pc.red(...args))
 
 function stopSpinner( funcName=null ) {
@@ -72,8 +71,6 @@ function dbg(...args) {
 }
 
 function error(err) {
-    // if (err?.stdout?.toString) err.stdout = err.stdout.toString()
-    // if (err?.stderr?.toString) err.stderr = err.stderr.toString()
     const msg = `${appName}: ${stringify(err.stack ?? err.toString())}`
     stopSpinner()
     console.error(boldRed(msg))
@@ -89,10 +86,16 @@ function warn(...args) {
     console.warn(pc.reset(pc.yellow(msg)))
 }
 
+function assert(condition, ...msg) {
+    if (condition) return condition
+    debugBreak()
+    throw Error(...msg)
+}
+
 const logResult         = (...args)             => { if (!options.quiet  ) log(pc.reset(pc.green(stringify(...args)))) }
 const logResultRed      = (...args)             => { if (!options.quiet  ) log(boldRed(stringify(...args))) }
 const logVerbose        = (...args)             => { if ( options.verbose) log(pc.reset(pc.magenta(stringify(...args)))) }
-const myAssert          = (condition, msg)      => { if (!condition) error(msg) }       // When we don't want a stack trace
+const myAssert          = (condition, msg)      => { if (condition) return condition; error(msg) }       // When we don't want a stack trace
 const delay             = async (ms)            => new Promise((resolve) => setTimeout(resolve, parseInt(ms)))
 const isaDirectory      = (path)                => { try { return fs.lstatSync(path).isDirectory() } catch(err) { return null } }
 const doesPathExist     = (fpath)               => { try { return fs.statSync(fpath)               } catch(err) { return null } }
@@ -527,20 +530,24 @@ function maybeCreateDir( type, dir, tokenFile=null ) {
 
 // Check whether an existing file/dir should be renamed, and maybe rename it.
 // When a local file/dir is found via its Fibery id, but it has a different name than what's in Fibery,
-// then we want to rename it to keep the local file name in sync with its Fibery name.
-function maybeRenameExisting( typeDescription, dir, existingFile, idealPath ) {
-    if (!existingFile) return idealPath
-    const existingDir   = path.dirname(existingFile).replace(/^\.$/, dir), existingFilename = path.basename(existingFile)
-    const existingPath  = path.join( dir, path.basename(existingFilename) )
-    const idealFilename = path.basename(idealPath)
+// then we should rename it to keep the local file name in sync with its Fibery name.
+function maybeRenameExisting( typeDescription, existingPath, idealPath ) {
+    if (!existingPath) return idealPath
     if (existingPath===idealPath) return idealPath
-    assert(existingDir===dir, `maybeRenameExisting dir mismatch: ${existingPath} => ${idealPath}`)
+    const existingDir   = path.dirname(existingPath)
+    const idealFile     = path.basename(idealPath)
+    assert(existingDir !=='.', 'existingPath was passed as basename only')
     if (!options.yes) {
-        warn(`Existing ${typeDescription} "${existingPath}" should be renamed to "${idealFilename}" - Use the \`--yes\` option to rename automatically`)
-        return existingFile
+        warn(`Existing ${typeDescription} "${existingPath}" should be renamed to "${idealPath}" - Use the \`--yes\` option to rename automatically`)
+        return existingPath
     }
-    warn(`Renaming ${typeDescription}:\t"${existingPath}"\t"${idealFilename}"`)
-    if (options.fake ) return existingFile
+    // Should be renamed
+    if (doesPathExist(idealPath)) {
+        warn(`Target "${idealFile}" exists, can't rename ${typeDescription} from:\t"${existingPath}"`)
+        return existingPath
+    }
+    warn(`Renaming ${typeDescription}:\t"${existingPath}"\t"${idealFile}"`)
+    if (options.fake ) return existingPath
     if (!options.nogit) {
         // Try renaming with `git mv`
         const gitmv = execGitCommandSync(['mv', existingPath, idealPath], {cwd: domainDir})
@@ -571,10 +578,12 @@ function find_scriptFile_byHeader( dbDir, idealFilePath, idHeaderComment ) {
     // Test the ideal filePath first
     if (testFileContentMatch(idealFilePath, idHeaderComment)) return idealFilePath
     // Look for a script file in the dbDir that contains the specified header line
-    const ext = path.extname(idealFilePath)                     // Extension including the '.'
-    return readdirSync(dbDir)?.find(
+    const ext   = path.extname(idealFilePath)                     // Extension including the '.'
+    const found = readdirSync(dbDir)?.find(
         (fname) => fname.endsWith(ext) && testFileContentMatch( path.join(dbDir, fname), idHeaderComment )
     )
+    if (!found) return null
+    return path.join(dbDir, found)
 }
 
 // Find a subdir that comtains the named tokenFile
@@ -588,9 +597,10 @@ function findSubdirByTokenFile( parentDir, tokenFileName ) {
 function getSpaceDir( space=null ) {
     if (!space) return path.join(domainDir, 'fibery')
     const tokenFile     = tokenFileName('space', space.id)                      // Identifies a Space by its Id
-    const idealDir      = path.join(domainDir, 'fibery', 'space', fixWindowsFsChars(space.name))   // This is what the dirName should be
-    const foundDir      = findSubdirByTokenFile(domainDir, tokenFile)
-    return foundDir ? maybeRenameExisting('space directory', domainDir, foundDir, idealDir)
+    const parentDir     = path.join(domainDir, 'fibery', 'space')
+    const idealDir      = path.join(parentDir, fixWindowsFsChars(space.name))   // This is what the dirName should be ideally
+    const foundDir      = findSubdirByTokenFile(parentDir, tokenFile)
+    return foundDir ? maybeRenameExisting('space directory', foundDir, idealDir)
                     : maybeCreateDir('space', idealDir, tokenFile)
 }
 
@@ -600,9 +610,10 @@ function getDbDir( space, dbId ) {
     if (!dbId) return spaceDir                                                  // Space dir not specific to any DB
     const dbName        = dbName_from_dbId(dbId)
     const tokenFile     = tokenFileName('db', dbId)                             // Identifies a DB by its Id
-    const idealDir      = path.join(spaceDir, 'database', fixWindowsFsChars(dbName))  // This is what the dirName should be
-    const foundDir      = findSubdirByTokenFile(spaceDir, tokenFile)
-    return foundDir ? maybeRenameExisting('DB directory', spaceDir, foundDir, idealDir)
+    const parentDir     = path.join(spaceDir, 'database')
+    const idealDir      = path.join(parentDir, fixWindowsFsChars(dbName))       // This is what the dirName should be ideally
+    const foundDir      = findSubdirByTokenFile(parentDir, tokenFile)
+    return foundDir ? maybeRenameExisting('DB directory', foundDir, idealDir)
                     : maybeCreateDir('DB', idealDir, tokenFile)
 }
 
@@ -848,14 +859,14 @@ function expandScript( scriptPath ) {
 
 
 // Perform macro substitutions on a script
-function macroSubstitutions( text ) {
-    let result = '', lineNo = 0
-    for (let line of text.split(/\r\n|\r|\n/)) {
-        ++lineNo
-        result += line.replace(/\b__LINE__\b/g, lineNo) + '\n'
-    }
-    return result
-}
+// function macroSubstitutions( text ) {
+//     let result = '', lineNo = 0
+//     for (let line of text.split(/\r\n|\r|\n/)) {
+//         ++lineNo
+//         result += line.replace(/\b__LINE__\b/g, lineNo) + '\n'
+//     }
+//     return result
+// }
 
 
 // Get a Space/DB Id from its token file
@@ -887,7 +898,8 @@ function localActionScriptPath( dbDir, automationKind, automationName, automatio
     const idealFile     = path.join(dir, fileName)
     maybeCreateDir(automationKind, dir)
     const existingFile  = find_scriptFile_byHeader(dir, idealFile, idHeader)
-    return maybeRenameExisting('script', dir, existingFile, idealFile)
+    assert(path.dirname(existingFile)!=='.', "oops")  //DEBUG
+    return maybeRenameExisting('script', existingFile, idealFile)
 }
 
 // Save an automation action script locally
@@ -1026,7 +1038,7 @@ async function validate() {
 //  Pull: Get automation script definitions from the Fibery Workspace
 //
 async function pull() {
-    const forceCache = true     // Disable caching when pulling automation scripts from Fibery, so we always get CURRENT automation definitions
+    const forceCache = false     // Disable caching when pulling automation scripts from Fibery, so we always get CURRENT automation definitions
     const {automationsCnt, scriptActionsCnt} = await processFilteredAutomations( forceCache,
         ({dbDir, automationKind, automation, scriptActions}) => {
             for (const action of scriptActions)
