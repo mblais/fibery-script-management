@@ -28,7 +28,7 @@ const warned            = {}                            // Don't repeat identica
 //---------------------------------------------------------------------------------------------------
 //  Helper functions
 
-const debugBreak        = ()  => { if (debug) debugger }
+const debugBreak        = ()  => { if (debug || process.env.IN_DEBUGGER) debugger }
 function timestamp()    { return new Date(...arguments).toLocaleString('sv', {year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric', fractionalSecondDigits: 3}).replace(',', '.') }
 const startTimestamp    = timestamp()
 const stringify         = (...args) => args.map( (a) =>
@@ -985,7 +985,7 @@ function validateAutomation( dbName, automationKind, automation ) {
 //  Iterate over all filtered automations and process them with the supplied callback
 //
 async function processFilteredAutomations( forceCache, processAutomation ) {
-    await doSetup()
+    await doSetup(forceCache)
     let spacesCnt=0, dbsCnt=0, automationsCnt=0, scriptActionsCnt=0, allActionsCnt=0
     for (const space of spaces_filtered()) {
         ++spacesCnt
