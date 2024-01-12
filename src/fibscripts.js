@@ -514,9 +514,9 @@ const tokenFileName = (tokenType, id) => `.${id}.${tokenType}`
 
 // Create a dir (and maybe token file) if it doesn't already exist (maybe)
 function maybeCreateDir( type, dir, tokenFile=null ) {
-    if (options.fake) return dir
     if (!isaDirectory(dir)) {
-        if (!options.yes) error(`Missing ${type} directory "${dir}" - Use the \`--yes\` option to create missing directories automatically`)
+        myAssert(!doesPathExist(dir), `Can't create missing ${type} directory because it is a file:\t${dir}`)
+        myAssert(options.yes || options.fake, `Missing ${type} directory "${dir}" - Use the \`--yes\` option to create missing directories automatically`)
         warn(`Creating ${Capitalize(type)} dir:\t${dir}`)
         if (!options.fake) fs.mkdirSync(dir, {recursive: true})
     }
@@ -889,7 +889,7 @@ function findActionInAutomations( automations, scriptId, actionId ) {
     return action
 }
 
-// Find the local *.js script file for an action
+// Find the local *.js script file that corresponds to a particular automation action
 function localActionScriptPath( dbDir, automationKind, automationName, automationId, actionId ) {
     const idHeader      = scriptIdHeader(automationId, actionId)
     const scriptAction  = actionId.slice(-4)                                // Differentiates multiple scripts in the same Automation
@@ -898,6 +898,7 @@ function localActionScriptPath( dbDir, automationKind, automationName, automatio
     const idealFile     = path.join(dir, fileName)
     maybeCreateDir(automationKind, dir)
     const existingFile  = find_scriptFile_byHeader(dir, idealFile, idHeader)
+    if ( !existingFile) return idealFile
     assert(path.dirname(existingFile)!=='.', "oops")  //DEBUG
     return maybeRenameExisting('script', existingFile, idealFile)
 }
