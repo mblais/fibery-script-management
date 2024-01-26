@@ -39,7 +39,7 @@ This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and upda
 
     FIBERY                Base path for all local storage managed by the app
     FIBERY_DOMAIN         Which Fibery workspace domain to manage (or specify this with the `--workspace` option)
-    FIBERY_API_KEY        API key for your FIBERY_DOMAIN - get it from "Fibery Settings > API Keys"
+    FIBERY_API_KEY        API key for your FIBERY_DOMAIN - get it from "Fibery Settings \> API Keys"
 
 ## BASIC OPERATION
 
@@ -65,9 +65,10 @@ If no filter is specified for a Space/DB, ALL Spaces/DBs will be processed.
 
 If no filter is specified for a Button/Rule, NONE will be processed. So you must specify either the `--button` or `--rule` filter (or both) in order for any automations to be processed.
 
-Maximum of one filter can be defined per category (Space/DB/Button/Rule). All supplied filters must match an item for it to be processed.
+Only one filter can be defined for each category (Space/DB/Button/Rule). All supplied filters must match an item for the item to be processed; i.e., if you specify only a Space filter and a Rule filter, 
+the only automations that will be processed are Rules whose name matches the Rule filter, existing within Spaces whose name matches the Space filter.
 
-Instead of using the filters to specify an automation for `pull` or `push` or `validate`, you can use the `--url` option to specify the URL of a single Fibery Button/Rule.
+Instead of using the filters to specify an automation for `pull` or `push` or `validate`, you can instead use the `--url` option to specify the URL of a single Fibery Button/Rule to be processed.
 
 ## DIRECTORY STRUCTURE
 
@@ -77,54 +78,54 @@ The base directory containing all Fibery workspaces is defined by the FIBERY or 
 
     my.fibery.io/fibery/space/{SpaceName}/database/{DBName}/automations/{button or rule}/{automation name}
 
-The only difference between the Fibery URLs and corresponding local directory paths is that *automation names* are used in the local paths instead of the IDs used in URLs.
+The only difference between the Fibery URLs and corresponding local directory paths is that *automation names* are used in the local paths instead of the automation IDs taht are used in Fibery URLs.
 
 E.g., the URL:  "https://my.fibery.io/fibery/space/Projects/database/Tasks/automations/button/64ac4ff5ff58afe1abad6537/actions"
-would correspond to the local path :  "my.fibery.io/fibery/space/Projects/database/Tasks/automations/button/My Button Name ~{id}.js"
+would correspond to the local path:  "my.fibery.io/fibery/space/Projects/database/Tasks/automations/button/My Button Name ~{id}.js"
 
-Your Fibery workspace must be specified via the FIBERY_DOMAIN env var or the `--workspace` option; e.g. `--workspace=my.fibery.io`.
+Your Fibery Workspace must be specified via the FIBERY_DOMAIN env var or the `--workspace` option; e.g. `--workspace=my.fibery.io`.
 
 Each script action in a Button/Rule automation will be stored in its respective directory as described above, named either `{Button-name} ~{id}.js` or `{Rule-name} ~{id}.js`. The '{id}' within the name is the last four characters of the script's Action ID and is used to correlate each script file to a particular action within its automation (because there could be more than one script-action within a Button/Rule automation).
 
-The program will detect when a Space/DB/Automation has been renamed in Fibery, and if the `--yes` program option was specified the program will try to rename the corresponding local file/directory to match the new Fibery name using `git mv` (unless `--nogit` is specified, in which case the directory is renamed with the default OS rename functions).
+The program will detect when a Space/DB/Automation has been renamed in Fibery, and if the `--yes` program option was specified the program will try to rename the corresponding local file/directory to match the new Fibery name using `git mv` (unless `--nogit` is specified, in which case the directory is renamed with the default OS rename function).
 
 Some cache directories and housekeeping files are also created throughout the file hierarchy; their names always begin with a period.
 
 ## CACHING
 
-The result of every Fibery API query that returns part of the Workspace is stored in a local cache file or directory that begins with a period. These cached API results can be reused by the program instead of re-querying Fibery by specifying the \`--cache\` option. This can save time especially if you have many Spaces and DBs and automations.
+Every Fibery API query result is stored in a local cache file or directory that begins with a period. These cached API results can be reused by the program instead of re-querying Fibery by specifying the \`--cache\` option. This can save time if you have many Spaces and DBs and automations.
 
-These cache files also serve as backups, since they contain the complete definitions of all automations pulled from Fibery (not just the actual scripts).
+These cache files also serve as backups, since they contain the *complete definitions of all automations* pulled from Fibery (not just the script actions).
 
 Old cache files are not automatically deleted; Use the \`purge\` program command to trim them.
 
-When the \`--cache\` option is specified without any dates, the most recent cache files will be used. If you want the program to use different (earlier) cache files, specify a date range with the \`--before\` and \`--after\` options. A cache file's filename encodes its creation date+time, and this is used to find the most recent cache files within the date range specified by \`--before\` and \`--after\`. When a date range is specified, the program will always use the most recent cache files found within that range.
+When the \`--cache\` option is specified without any dates, the most recent cache files will be used. If you want the program to use different (earlier) cache files, specify a date range with the \`--before\` and/or \`--after\` options. A cache file's filename encodes its creation date+time, and this is used to find the most recent cache files within the date range specified by \`--before\` and \`--after\`. When a date range is specified, the program will always use the most recent cache files found within that range.
 
 ## SCRIPT MACROS
 
-A simple macro feature allows your local script files to "include" other source files. Macros are expanded recursively, so they can include other macros.
+A simple macro feature allows your local script files to "include" other local source files. Macros are expanded recursively so included files can themselves include additional files.
 
-Within a script file, including the content of a different source file is accomplished by specifying its path in a single-line comment of the form:
-    //+include <path>
+Within a script file, to include the content of a different source file, specify its path in a single-line comment of the form:
+    `//+include <path>`
 
-This directs the program to insert the file specified by <path> before the next line. The comment must start at the beginning of a line (no preceding whitespace).
+This directs the program to insert the file specified by `<path>` before the next line. The comment must start at the beginning of a line (no preceding whitespace).
 
-If the <path> begins with the "@" symbol, the "@" is replaced with the current FIBERY_DOMAIN directory path.
+If the `<path>` begins with the "@" symbol, the "@" is replaced with the current FIBERY_DOMAIN directory path.
 
 A relative path is interpreted relative to the directory of the file currently being processed; that could be a macro file in the case of one macro file including another.
 
 Immediately after the inserted macro content the program will add a corresponding macro-end comment line of the form:
-    //-include <path>
+    `//-include <path>`
 
 When adding a macro-inclusion comment in a script file, you do not need to incude the corresponding macro-end comment line; the program will insert it.
 
-When a local script file is \`pushed\` to Fibery, each macro block within a source file (i.e. the lines between \`//+include\` and \`//-include\`, if present) is replaced with the current content of the referenced macro file.
+When a local script file is \`pushed\` to Fibery, each macro block within a source file (i.e. the lines between \`//+include\` and \`//-include\`, if present) will be **replaced with the current content of the referenced macro file**.
 
-When pulling script files from Fibery, any macro content and comments will be left untouched, so after a \`pull\` operation your local script files will reflect what is actually on the server. But each time a local script file gets \`pushed\` back to your Fibery workspace, all its macro blocks will first be replaced by the current macro files' content.
+When pulling script files from Fibery, any macro content and comments will be left untouched, so after a \`pull\` operation your local script files will reflect what is actually in your Fibery Workspace. But each time a local script file gets \`pushed\` back to your Fibery workspace, all its macro blocks will first be replaced by the current macro files' content.
 
 ## PROGRAM COMMANDS IN DETAIL
 
-### fibscripts pull
+### `fibscripts pull`
 
 Download and save Fibery workspace Button and Rule Javascript actions. This will OVERWRITE existing local script files, so make sure you've committed any local changes before doing a pull.
 
@@ -135,7 +136,7 @@ Use the filter options to limit what Spaces/DBs/Buttons/Rules will be retrieved:
     --button      -b    Button  name filter
     --rule        -r    Rule    name filter
 
-### fibscripts push
+### `fibscripts push`
 
 Push local Javascript Button and Rule actions back to Fibery workspace. This will OVERWRITE Fibery script actions, so make sure the curent Workspace scripts are backed up. A `pull --fake` command (without `--cache`) will download the current Workspace scripts to local cache; `--fake` prevents overwriting your lcoal script files.
 
@@ -148,7 +149,7 @@ Use the filter options to limit what Spaces/DBs/Buttons/Rules will be updated:
     --button      -b    Button  name filter
     --rule        -r    Rule    name filter
 
-### fibscripts purge --before {date-time}
+### `fibscripts purge --before {date-time}`
 
 Purge local cache entries that were created on or before the specified cutoff date-time.
 
@@ -159,7 +160,7 @@ Use the filter options to limit what Spaces/DBs/Buttons/Rules will be affected:
     --space       -s    Space   name filter
     --db          -d    DB      name filter
 
-### fibscripts orphans
+### `fibscripts orphans`
 
 Search for "orphaned" local files and dirs that no longer correspond to the Fibery Workspace.
 
@@ -168,7 +169,7 @@ You can use these filter options to limit which local Space/DB dirs will be chec
     --space       -s    Space   name filter
     --db          -d    DB      name filter
 
-### fibscripts validate
+### `fibscripts validate`
 
     Test automations for valid structure.
 
@@ -185,7 +186,7 @@ You can use these filter options to limit which local Space/DB dirs will be chec
     fibscripts  pull -b/ -r/                             # Pull Button and Rule scripts from Fibery that don't already exist locally
     fibscripts  push -r/ -b/                             # Push ALL local Button and Rule scripts to Fibery, overwriting current Workspace scripts
     fibscripts  pull --space=test\* -b/                  # Pull all Button scripts from Spaces beginning with "test"
-    fibscripts  pull --space='!/^test|^foo' -r/          # Pull all Rule scripts from Fibery Spaces NOT beginning with "test" or "foo"
+    fibscripts  pull --space='!/^test|^foo' -r/          # Pull all Rule scripts from all Fibery Spaces NOT beginning with "test" or "foo"
     fibscripts  pull --rule='/test|foo'                  # Pull Rule scripts from all Rules with names containing "test" or "foo"
     fibscripts  push --space='test*' -b/                 # Push all Button scripts in Spaces beginning with "test"
     fibscripts  push --db=bar -b'/test|foo'              # Push Button scripts for Buttons containing "test" or "Foo" in the "Bar" DB of any Space
