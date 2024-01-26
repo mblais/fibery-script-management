@@ -23,6 +23,7 @@ let   appReturnCode     = 0                             // Program return code
 let   debug             = false
 let   spinner
 let   useSpinner        = !process.env.IN_DEBUGGER
+let   includedFrom                                   // Context message for expandScript() error reporting
 const warned            = {}                            // Don't repeat identical warnings
 
 //---------------------------------------------------------------------------------------------------
@@ -827,7 +828,7 @@ const deleteScriptHeaders = (script) => script.replace(/\/\/.fibery\s+.*[\r\n]+/
 function expandScript( scriptPath ) {
     const src               = path.basename(scriptPath)
     const script            = readFileSync(scriptPath)
-    myAssert(script!=null, `Script not found: ${scriptPath}`)
+    myAssert(script!=null, `Script file not found: ${scriptPath}${includedFrom}`)
     const lines             = script.split(/\r\n|\r|\n/)
     let   result            = ''
     // Process each script line
@@ -840,11 +841,12 @@ function expandScript( scriptPath ) {
             continue
         }
         // Found a file-inclusion-macro-start comment line
+        includedFrom        = `\n  included from: ${scriptPath}` + includedFrom
         const includeStart  = lines[lineNo]
         const includeEnd    = includeStart.replace('//+', '//-')                          // comment line that marks the macro end
         let   includePath   = includeStart.match( /\s+(.*)/ )?.[1]
                             ?.trim()?.replace(/^(["'])(.*)\1$/, "$2")                   // strip quotes surrounding the macro path
-        myAssert(includePath, `Missing file-include path on line ${lineNo} of ${scriptPath}`)
+        myAssert(includePath, `Missing file-include path on line ${lineNo} of ${scriptPath}${includedFrom}`)
         includePath         = fixPathSeparators( includePath.replace(/^@/, domainDir) )   // Substitute leading "@" with domainDir
         if (includePath.startsWith('..'))                                                 // Interpret relative path relative to scriptPath
             includePath     = path.normalize(path.join(path.dirname(scriptPath), includePath))
@@ -1080,6 +1082,7 @@ async function push() {
                     // Process this script action
                     const apiHeader  = scriptIdHeader(automation.id, action.id)
                     const gitHeader  = scriptGitHeader(scriptPath)
+                    includedFrom     = ''
                     const bareScript = deleteScriptHeaders( expandScript(scriptPath) )
                     const newScript  = `${apiHeader}${gitHeader}\n${bareScript}`    // Add headers to script
                     // const newScript  = macroSubstitutions(`${apiHeader}${gitHeader}\n${bareScript}`)    // Add headers to script and substitute macros
