@@ -962,6 +962,10 @@ function validateAutomation( dbName, automationKind, automation ) {
         const actionType        = action.action.replace(/-\w{8}-\w{4}-\w{4}-\w{4}-\w{12}(?:-.*)?$/, '')
         const title             = `[${dbName}] ${Capitalize(automationKind)} "${automation.name}" action #${actionNum} (${actionType})`
         const validParams       = validActionParams[actionType] ?? myAssert(false, `${title}: unknown actionType`)
+        if (!action.args) {
+            warn(`No action.args for ${title}`)
+            continue
+        }
         const actionArgsKeys    = Object.keys(action.args)
         const unexpectedKeys    = actionArgsKeys.filter( k => !validParams.args.valid.includes(k) )
         const actionArgsCount   = actionArgsKeys.length
@@ -1277,7 +1281,8 @@ async function main() {
         urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)(?:\/actions\/?|\/activity\/?)?$/ )?.groups
         myAssert(urlFilter?.fields, `\`--url\` value is not a valid Fibery automation URL: ${options.url}`)
     }   
-    else if (command?.match(/pull|push|validate/)) myAssert(options.url||options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both), or the \`--url\` option, with the \`${command}\` command.`)
+    else if (command?.match(/pull|push|validate/))
+                            myAssert(options.url||options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both), or the \`--url\` option, with the \`${command}\` command.`)
     if (command!=='help')   myAssert( positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
     if (command!=='push')   myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
     if (command!=='pull')   myAssert(!options.noclobber,     '`--noclobber` option can only be used with the `pull` command')
