@@ -731,14 +731,21 @@ function makeFilter( pattern, field='name' ) {
 const urlFilter = {
     fields      : {},
     findSpace   : (spaces)  => spaces?.[ Object.keys(spaces).find( (s) => s===urlFilter.fields.space ) ],
-    findDb      : (space)   => space.types[ `${space.name}/${urlFilter.fields.db}` ],
     findAuto    : (autos)   => autos.find( (a) => a.id===urlFilter.fields.id ),
+    findDb      : (space)   => {
+        // In urlFilter.fields.db, spaces in DB names are replaced with underscores
+        const matchDbName   = new RegExp( urlFilter.fields.db.replace(/_/g, '[ _]') )
+        const dbName        = Object.keys(space.types).find( (n) => n.match(matchDbName))
+        return space.types[dbName]
+    }
 }
 
 // Generate all Spaces that pass the Space filter
 function* spaces_filtered() {
-    if (options.url)
-        yield urlFilter.findSpace(spaces)
+    if (options.url) {
+        const space = urlFilter.findSpace(spaces)
+        if (space) yield space
+    }
     else {
         yield* Object.values(spaces)
             .filter( makeFilter(options.space) )
@@ -762,8 +769,10 @@ function* dbs_filtered( space ) {
 function* buttons_filtered( buttons ) {
     if (!buttons) return
     if (options.url) {
-        if (urlFilter.fields.kind==='button')
-            yield urlFilter.findAuto(buttons)
+        if (urlFilter.fields.kind==='button') {
+            const btn = urlFilter.findAuto(buttons)
+            if (btn) yield btn
+        }
     } else {
         yield* buttons
             .filter( makeFilter(options.button) )
@@ -775,8 +784,10 @@ function* buttons_filtered( buttons ) {
 function* rules_filtered( rules ) {
     if (!rules) return
     if (options.url) {
-        if (urlFilter.fields.kind==='rule')
-            yield urlFilter.findAuto(rules)
+        if (urlFilter.fields.kind==='rule') {
+            const rule = urlFilter.findAuto(rules)
+            if (rule) yield rule
+        }
     } else {
         yield* rules
             .filter( makeFilter(options.rule) )
