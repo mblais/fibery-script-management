@@ -85,6 +85,7 @@ function warn(...args) {
     warned[msg] = 1
     stopSpinner()
     console.warn(pc.reset(pc.yellow(msg)))
+    return false
 }
 
 function assert(condition, ...msg) {
@@ -832,8 +833,8 @@ function scriptGitHeader( filePath ) {
 }
 
 // Remove fibscripts header comments from a script
-const deleteScriptHeaders = (script) => script.replace(/\/\/.fibery\s+.*[\r\n]+/, '')
-                                              .replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '')
+const deleteScriptHeaders = (script) => script?.replace(/\/\/.fibery\s+.*[\r\n]+/, '')
+                                              ?.replace(/\/\*.git\b[\s\S]*?\*\/\s*[\r\n]+/, '')
 
 // Get a script file's content, expanding any macros
 function expandScript( scriptPath ) {
@@ -922,12 +923,19 @@ function saveLocalActionScript( dbDir, automationKind, automation, action ) {
     const scriptPath    = localActionScriptPath(dbDir, automationKind, automation.name, automation.id, action.id)
     if (options.noclobber && doesPathExist(scriptPath))
         return warn(`Noclobber script:\t"${scriptPath}"`)
-    logResult(`Saving script:\t${scriptPath}`)
     const apiHeader     = scriptIdHeader(automation.id, action.id)
     const bareScript    = deleteScriptHeaders(script)
     const newScript     = `${apiHeader}\n${bareScript}`
+    // Is the Action script unchanged from the existing local script?
+    const oldScript     = deleteScriptHeaders(readFileSync(scriptPath) || '').replace(/\r\n/g, '\n')
+    if (oldScript === bareScript.replace(/\n$/s, '')) {
+        logResult(`Unchanged script - not saved:\t${scriptPath}`)
+        return false
+    }
+    logResult(`Saving script:\t${scriptPath}`)
     if (options.fake) return
     fs.writeFileSync(scriptPath, newScript)
+    return true
 }
 
 // Push an entire Button or Rule automation definition to the Workspace
@@ -1020,9 +1028,9 @@ async function processFilteredAutomations( forceCache, processAutomation ) {
                     logVerbose(`Scanning     ${Capitalize(automationKind)}:  \t${automation.name}\t${automation.id}\t${isAutomationEnabled(automation) ? '{E}' : '{D}'}`)
                     const problemsCnt    = validateAutomation(dbName, automationKind, automation)      // Always validate
                     const scriptActions  = findScriptActions(automation.actions)
-                    scriptActionsCnt    += scriptActions.length
                     allActionsCnt       += automation.actions.length
-                    await processAutomation({space, dbName, dbDir, automationKind, automation, scriptActions, problemsCnt})
+                    const cnt = await processAutomation({space, dbName, dbDir, automationKind, automation, scriptActions, problemsCnt})
+                    scriptActionsCnt    += (typeof cnt==='number') ? cnt : scriptActions.length
                 }
             }
         }
@@ -1059,8 +1067,10 @@ async function pull() {
     const forceCache = false     // Disable caching when pulling automation scripts from Fibery, so we always get CURRENT automation definitions
     const {automationsCnt, scriptActionsCnt} = await processFilteredAutomations( forceCache,
         ({dbDir, automationKind, automation, scriptActions}) => {
+            let cnt = 0
             for (const action of scriptActions)
-                saveLocalActionScript(dbDir, automationKind, automation, action)
+                cnt += saveLocalActionScript(dbDir, automationKind, automation, action) ? 1:0
+            // return cnt
         })
     if (options.quiet) log(scriptActionsCnt)
     else logResult(`${scriptActionsCnt} script actions ${options.fake ? 'found to save':'saved'} in ${automationsCnt} automations`)
