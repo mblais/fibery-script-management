@@ -3,8 +3,8 @@
 //---------------------------------------------------------------------------------------------------
 // git push -u origin main
 
+import got from 'got'
 import   childProcess    from 'node:child_process'
-// import   assert          from 'node:assert/strict'
 import   path            from 'node:path'
 import   fs              from 'node:fs'
 import { parseArgs     } from 'node:util'
@@ -23,7 +23,7 @@ let   appReturnCode     = 0                             // Program return code
 let   debug             = false
 let   spinner
 let   useSpinner        = !process.env.IN_DEBUGGER
-let   includedFrom                                   // Context message for expandScript() error reporting
+let   includedFrom                                      // Context message for expandScript() error reporting
 const warned            = {}                            // Don't repeat identical warnings
 
 //---------------------------------------------------------------------------------------------------
@@ -63,7 +63,7 @@ function log(...args) {
 
 function dbg(...args) {
     if (!debug) return
-    const msg = pc.reset(pc.dim(pc.white(stringify(...args))))
+    const msg = pc.reset(pc.dim(pc.cyan(stringify(...args))))
     if (useSpinner) {
         stopSpinner()
         spinner.start(msg)
@@ -72,7 +72,7 @@ function dbg(...args) {
 }
 
 function error(err) {
-    const msg = `${appName}: ${stringify(err.stack ?? err.toString())}`
+    const msg = `${appName}: ${stringify(err?.stack ?? err.toString())}`
     stopSpinner()
     console.error(boldRed(msg))
     debugBreak()
@@ -115,35 +115,43 @@ const isAutomationEnabled = (a)                 => a.enabled
 //
 
 const commandLineOptions = {
-    workspace:     { type: 'string',   short: 'w',                 },
-    space:         { type: 'string',   short: 's',                 },   // default: match all Spaces
-    db:            { type: 'string',   short: 'd',                 },   // default: match all DBs
-    button:        { type: 'string',   short: 'b',                 },   // default: match  no Buttons
-    rule:          { type: 'string',   short: 'r',                 },   // default: match  no Rules
-    enable:        { type: 'string',   short: 'e',                 },
-    cache:         { type: 'boolean',  short: 'c',                 },
-    url:           { type: 'string',   short: 'u',                 },
-    nogit:         { type: 'boolean',  short: 'g',  default: false },
-    noclobber:     { type: 'boolean',  short: 'n',  default: false },
-    fake:          { type: 'boolean',  short: 'f',  default: false },
-    delay:         { type: 'string',   short: 'l',  default: '0'   },
-    verbose:       { type: 'boolean',  short: 'v',  default: false },
-    debug:         { type: 'boolean',               default: false },
-    quiet:         { type: 'boolean',  short: 'q',  default: false },
-    yes:           { type: 'boolean',  short: 'y',  default: false },
-    nofiles:       { type: 'boolean',               default: false },
-    validate:      { type: 'boolean',               default: false },
-    before:        { type: 'string',                               },
-    after:         { type: 'string',                               },
+    workspace:  { type: 'string',   short: 'w',                 },
+    space:      { type: 'string',   short: 's',                 },   // default: match all Spaces
+    db:         { type: 'string',   short: 'd',                 },   // default: match all DBs
+    button:     { type: 'string',   short: 'b',                 },   // default: match  no Buttons
+    rule:       { type: 'string',   short: 'r',                 },   // default: match  no Rules
+    enable:     { type: 'string',   short: 'e',                 },
+    cache:      { type: 'boolean',  short: 'c',                 },
+    url:        { type: 'string',   short: 'u',                 },
+    nogit:      { type: 'boolean',  short: 'g',  default: false },
+    noclobber:  { type: 'boolean',  short: 'n',  default: false },
+    fake:       { type: 'boolean',  short: 'f',  default: false },
+    delay:      { type: 'string',   short: 'l',  default: '0'   },
+    verbose:    { type: 'boolean',  short: 'v',  default: false },
+    debug:      { type: 'boolean',               default: false },
+    quiet:      { type: 'boolean',  short: 'q',  default: false },
+    yes:        { type: 'boolean',  short: 'y',  default: false },
+    nofiles:    { type: 'boolean',               default: false },
+    validate:   { type: 'boolean',               default: false },
+    'strict-validation':
+                { type: 'boolean',  short: 't',  default: false },
+    before:     { type: 'string',                               },
+    after:      { type: 'string',                               },
+    nice:       { type: 'boolean',                              },
+    help:       { type: 'boolean',                              },
 }
 
 // Parse command line options
 function parseCommandLineOptions() {
-    const {values, positionals: pos} = parseArgs({ args: process.argv.slice(2), options: commandLineOptions, allowPositionals: true })
-    options             = values
-    positionals         = pos ?? []
-    debug               = debug || options.debug
-    if (debug)  options.verbose = true
+    try {
+        const {values, positionals: pos} = parseArgs({ args: process.argv.slice(2), options: commandLineOptions, allowPositionals: true })
+        options             = values
+        positionals         = pos ?? []
+        debug               = debug || options.debug
+        if (debug)  options.verbose = true
+    } catch (err) {
+        myAssert(false, err.message)
+    }
 }
 
 // Setup and validate inputs
@@ -215,6 +223,7 @@ Usage:  ${appName}  { pull | push | purge | orphans | validate | help {cmd} }  [
     purge --before {date} Delete cache entries older than the specified cutoff date
     orphans               List orphaned local files and dirs that were deleted in Fibery
     validate              Check automations for valid structure
+    run                   Run an automation script locally (experimental)
 
 OPTIONS: (can appear anywhere on the command line)
 
@@ -232,11 +241,14 @@ OPTIONS: (can appear anywhere on the command line)
     --yes         -y      Create/rename local files/directories as needed for pull operations
     --fake        -f      Dry run - don't actually update or overwrite anything
     --delay       -l      Delay in ms to wait before every Fibery API call
+    --nice        -i      Wait for Fibery work queues to clear before running scripts
+    --strict-validation -t Require all actions to pass validatation
     --quiet       -q      Disable progress messages and spinners; only output a terse summary or count
     --verbose     -v      Verbose output
     --debug               Debug output
     --before {date-time}  End of date range for cache files (matches before OR EQUAL)
     --after  {date-time}  Start of date range for cache files
+    --help                Show help
 
 ENVIRONMENT VARIABLES:
 
@@ -336,6 +348,7 @@ EXAMPLES
     ${appName}  purge --before 2023-01-30                # Delete local cache files created ≤ 2023-01-30
     ${appName}  orphans                                  # Find all "orphaned" local files and dirs that no longer correspond to the Fibery Workspace
     ${appName}  validate -b\* -r\*                       # Check all automations for valid structure
+    ${appName}  run -sREPORTS -dCallStats -r'CreateMissingCallStats*' # Run the selected script locally (experimental)
 `)
             break
 
@@ -421,15 +434,20 @@ async function fiberyFetch( address, method, body=null ) {
             'Content-type':  'application/json; charset=utf-8',
             'Authorization': `Token ${process.env.FIBERY_API_KEY}`,
     }}
-    if (body) payload.body = typeof body==='string' ? body : JSON.stringify(body)
+    // if (body) payload.body = typeof body==='string' ? body : JSON.stringify(body)
+    // dbg(`fiberyFetch:\t${method} ${url}\t${JSON.stringify(payload)}`)
+    if (body) payload.json = typeof body==='object' ? body : JSON.parse(body)
     dbg(`fiberyFetch:\t${method} ${url}\t${JSON.stringify(payload)}`)
     try {
         if (options.fake && method==='PUT') return null
         await delay(options.delay)
-        // if (!options.quiet) log(options.verbose ? `${method} ${url}` : '')
-        response = await fetch(url, payload)
-        if (response?.status==200) return response.json()
-        error(`${response?.status}: ${response?.statusText}\n${url}`)
+        // response = await fetch(url, payload)
+        // if (response?.status==200) return response.json()
+        // error(`${response?.status}: ${response?.statusText}\n${url}`, method, body)
+
+        const response = await got(url, {...payload, resolveBodyOnly:false, responseType:'text'})
+        if (response?.statusCode==200) return JSON.parse(response.body)
+        error(`${response?.statusCode}: ${response?.statusText}\n${url}`, method, payload)    
     } catch (err) {
         error(`${joinNonBlank('\n', err?.cause, response?.status, response?.statusText, err?.message)}\n${url}`)
     }
@@ -975,6 +993,7 @@ function validateAutomation( dbName, automationKind, automation ) {
         'unlink'                 : { args: {min: 0, max: 2, valid: ['filter','fields'  ] }},
         'update'                 : { args: {min: 1, max: 2, valid: ['filter','fields'  ] }},
         'watch'                  : { args: {min: 1, max: 1, valid: ['watchers'         ] }},
+        'add-pdf'                : { args: {min: 2, max: 3, valid: ['fileName', 'template', 'treatAsHtml'] } },
     }
     for (const action of automation.actions) {
         ++actionNum
@@ -1027,9 +1046,10 @@ async function processFilteredAutomations( forceCache, processAutomation ) {
                     ++automationsCnt
                     logVerbose(`Scanning     ${Capitalize(automationKind)}:  \t${automation.name}\t${automation.id}\t${isAutomationEnabled(automation) ? '{E}' : '{D}'}`)
                     const problemsCnt    = validateAutomation(dbName, automationKind, automation)      // Always validate
+                    if (problemsCnt>0 && options['strict-validation']) continue
                     const scriptActions  = findScriptActions(automation.actions)
                     allActionsCnt       += automation.actions.length
-                    const cnt = await processAutomation({space, dbName, dbDir, automationKind, automation, scriptActions, problemsCnt})
+                    const cnt = await processAutomation({space, spaceName: space.name, dbName, dbDir, automationKind, automation, scriptActions, problemsCnt})
                     scriptActionsCnt    += (typeof cnt==='number') ? cnt : scriptActions.length
                 }
             }
@@ -1112,7 +1132,7 @@ async function push() {
                     const newScript  = `${apiHeader}${gitHeader}\n${bareScript}`    // Add headers to script
                     // const newScript  = macroSubstitutions(`${apiHeader}${gitHeader}\n${bareScript}`)    // Add headers to script and substitute macros
                     action.args.script.value = newScript
-                    logResult(`Pushing action script:\t${scriptPath}`)  
+                    logResult(`Pushing action script:\t${scriptPath}`)
                     // The automation will get pushed after all actions have been processed (below)
                 }
             }
@@ -1136,7 +1156,7 @@ async function push() {
     else if (options.nofiles)
         logResult(options.fake ? `${automationsCnt} automations found to push` :
                                  `${automationsCnt} automations pushed`)
-    else 
+    else
         logResult(options.fake ? `${totalActionsPushed} actions found to push in ${automationsCnt} automations` :
                                  `${totalActionsPushed} actions pushed in ${automationsCnt} automations`)
 }
@@ -1288,6 +1308,292 @@ async function enable() {
     else logResult(`${automationsCnt} automations ${options.fake ? 'found to '+enable_disable : enable_disable+'d'}`)
 }
 
+
+//---------------------------------------------------------------------------------------------------
+//  RunScript functionality
+//
+const enumIds_ = {}          // Lookup an enum Id from its enum-type and name
+
+// Get an enum-field entry's Id from its type and entry-name
+const getEnumId_fromName = async(enumType, enumName) => {
+    if (!enumIds_[enumType]) {
+        // Fetch all the enum entities and build the lookup
+        // const spaceName     = enumType.replace(/\/.*/, '')
+        const nameField     =  'enum/name' // `${spaceName}/Name`
+        const command       = [{ command: 'fibery.entity/query', args: {
+            query: {
+                'q/from'    : enumType,
+                'q/select'  : [ 'fibery/id', nameField ],     // 'q/select'  : [ 'fibery/id', { nameField: ['enum/name'] } ],
+                'q/limit'   : 'q/no-limit',
+            }
+        } }]
+        const data      = await fiberyFetch('/api/commands', 'post', command)
+        // Build the lookup entries
+        const entries   = {}
+        for (const entity of data[0].result)
+            entries[ entity[nameField] ] = entity['fibery/id']
+        enumIds_[enumType] = entries
+    }
+    return enumIds_[enumType][enumName]
+}
+
+// Adjust a "front-end" entity's field names and entity refs for the backend API
+async function adjustEntityForApi( type, entity ) {
+    const spaceName         = type.replace(/\/.*/, '')
+    const fiberyFields      =   {  // Translate "front-end/context.fibery" fibery field names to back-end API field names
+        'id'                : 'fibery/id',
+        'Id'                : 'fibery/id',
+        'Public Id'         : 'fibery/public-id',
+        'Rank'              : 'fibery/rank',
+        'Created By'        : 'fibery/created-by',
+        'Creation Date'     : 'fibery/creation-date',
+        'Modification Date' : 'fibery/modification-date',
+    }
+    const translateFieldName = (fieldName) => fiberyFields[fieldName] ?? `${spaceName}/${fieldName}`
+    
+    // Add Space-name to field-names
+    const addSpaceNameToFieldNames = (entity) =>
+          entity instanceof Array  ? entity.map( (v) => addSpaceNameToFieldNames(v) )
+        : entity instanceof Object ? Object.fromEntries(
+            Object.entries(entity)
+            .map( ([fieldName, val]) => [translateFieldName(fieldName), addSpaceNameToFieldNames(val)] ))
+        : entity
+
+    // Find a field def by name
+    const getFieldDef = (fieldName) => schema.types[type]['fibery/fields'].find( (f) => f['fibery/name']===fieldName )
+
+    // Is fieldDef an enum (single/multi select)?
+    const isEnumField = (fieldDef) => fieldDef['fibery/meta']['fibery/type-component?'] === true
+
+    // Is fieldDef a relation?
+    const isRelationField = (fieldDef) => fieldDef['fibery/meta']['fibery/relation']
+
+    // Lookup the Id of a particular enum-field entry from its Name
+    const getEnumValueId = async(fieldDef, name) => await getEnumId_fromName(fieldDef['fibery/type'], name)
+
+    // Adjust fields for back-end API use
+    const fixupFields = async(entity) => {
+        const result = {}
+        for (let [fieldName, val] of Object.entries(entity)) {
+            const fieldDef = getFieldDef(fieldName)
+            if (isEnumField(fieldDef))              // Replace enum-field values (names) with their corresponding enum-Id
+                val = { 'fibery/id': await getEnumValueId(fieldDef, val) }
+            else if (isRelationField(fieldDef) && typeof val==='string')
+                val = { 'fibery/id': val }          // Fixup a bare relation Id
+            result[fieldName] = val
+        }
+        return result
+    }
+
+    //-------------------------------------------//
+    entity = addSpaceNameToFieldNames(entity)
+    return await fixupFields(entity)
+}
+
+async function adjustEntitiesForApi( type, entities ) {
+    const result = []
+    for (const entity of entities)
+        result.push( await adjustEntityForApi(type, entity) )
+    return result
+}
+
+// Simulate Fibery's script environment for running scripts locally
+const context = {
+    getService( name ) {
+        if (name==='fibery')
+            return context.fibery
+        else
+            throw Error(`Unsupported: context.getService("${name}")`)
+    },
+
+    fibery: {
+
+        async executeSingleCommand( body ) {
+            dbg('context.fibery.executeSingleCommand:', body)
+            await waitIfNice()
+            const isArrayBody = body instanceof Array
+            if (!isArrayBody)   body = [body]
+            const data      = await fiberyFetch( '/api/commands', 'post', body )
+            const message   = data?.reduce( (acc, result, i) => acc +
+                (result?.success===false ? `[${i}]: ${result.message}\n` : ''), '' )
+            if (message) {
+                debugBreak()
+                error('fibery Entity API errors: '+message)
+            }
+            return isArrayBody ? data : data[0].result
+        },
+
+        async createEntityBatch( type, entities ) {
+            dbg(`context.fibery.createEntityBatch: ${type} (${entities.length})`)
+            assert(entities instanceof Array)
+            const body = (await adjustEntitiesForApi(type, entities))
+                .map( (entity) => ({
+                    command : "fibery.entity/create",
+                    args    : {type, entity}
+                }) )
+            return context.fibery.executeSingleCommand(body)
+        },
+
+        async createEntity( type, entity ) {
+            dbg(`context.fibery.createEntity: ${type}`)
+            assert(entity instanceof Object)
+            entity = await adjustEntityForApi(type, entity)
+            const body = {
+                command : "fibery.entity/create",
+                args    : {type, entity}
+            }
+            return context.fibery.executeSingleCommand(body)
+        },
+
+        async deleteEntityBatch( type, ids ) {
+            dbg(`context.fibery.deleteEntityBatch: ${type} (${ids.length})`)
+            assert(ids instanceof Array)
+            const body = ids.map( (id) => ({
+                    command : "fibery.entity/delete",
+                    args    : {type, entity:{'fibery/id': id} }
+                }) )
+            return context.fibery.executeSingleCommand(body)
+        },
+
+        async deleteEntity( type, id ) {
+            dbg(`context.fibery.createEntity: ${type}`)
+            assert(entity instanceof Object)
+            const body = {
+                command : "fibery.entity/delete",
+                args    : {type, entity:{'fibery/id': id} }
+        }
+            return context.fibery.executeSingleCommand(body)
+        },
+
+        async updateEntity( type, id, entity ) {
+            dbg(`context.fibery.updateEntity: ${type} ${id}`)
+            assert(entity instanceof Object)
+            entity = await adjustEntityForApi(type, {...entity, id})
+            const body = {
+                command : "fibery.entity/update",
+                args    : {type, entity}
+            }
+            return context.fibery.executeSingleCommand(body)
+        },
+
+        async updateEntityBatch( type, entities ) {
+            dbg(`context.fibery.updateEntityBatch: ${type} (${entities.length})`)
+            assert(entities instanceof Array)
+            const body = (await adjustEntitiesForApi(type, entities))
+                .map( (entity) => ({
+                    command : "fibery.entity/update",
+                    args    : {type, entity}
+                }) )
+            return context.fibery.executeSingleCommand(body)
+        },
+
+        //TODO: implement the remaining Fibery script API functions:
+        //  getEntityById(type: string, id: string, fields: string[])
+        //  getEntitiesByIds(type: string, ids: string[], fields: string[])
+        //  addCollectionItem(type: string, id: string, field: string, itemId: string)
+        //  addCollectionItemBatch(type: string, field: string, args: {id: string, itemId: string}[])
+        //  removeCollectionItem(type: string, id: string, field: string, itemId: string)
+        //  removeCollectionItemBatch(type: string, field: string, args: {id: string, itemId: string}[])
+        //  setState(type: string, id: string, state: string)
+        //  setStateToFinal(type: string, id: string)
+        //  assignUser(type: string, id: string, userId: string)
+        //  unassignUser(type: string, id: string, userId: string)
+        //  getDocumentContent(secret: string, format: string)
+        //  setDocumentContent(secret: string, content: string, format: string)
+        //  appendDocumentContent(secret: string, content: string, format: string)
+        //  addComment(type: string, id: string, comment: string, authorId: string, format: string)
+        //  addFileFromUrl(url: string, fileName: string, type: string, id: string, headers: object)
+        //  executeAction(action: string, type: string, args: [object])
+        //  graphql(spacename: string, command: string)
+        //  getSchema()
+    },
+
+    localRun: true
+}
+
+// Get a count of total Workspace-calculations queue depth
+async function fiberyWorkspaceQueues() {
+    let   total = 0
+    const queryAddrs = ['/api/formulas/status', '/api/entity-relation-linker/status', '/api/automation-rules/status'] // '/api/search-message-handlers/status']
+    for (const addr of queryAddrs) {
+        const result = await fiberyFetch(addr, 'get')
+        total += result?.queueSize
+        await delay(500)
+    }
+    return total
+}
+
+// Wait for Fibery work queues to clear
+async function waitIfNice( delayMs=60000 ) {
+    while (options.nice) {
+        const queueLen  = await fiberyWorkspaceQueues()
+        if (queueLen < 1) break
+        log(`Waiting for Fibery queues: ${queueLen}`)
+        await delay(delayMs)
+    }
+}
+
+//---------------------------------------------------------------------------------------------------
+//  RunScript: run a Fibery automation script locally
+//
+async function runScript() {
+    const forceCache = options.forceCache
+
+    // How many actions are matched?
+    const {automationsCnt, scriptActionsCnt} = await processFilteredAutomations( forceCache, ()=>null )
+    myAssert(automationsCnt===1, `Error: matched ${automationsCnt} automations (must match exacly 1)`)
+    await processFilteredAutomations( forceCache,
+        async({spaceName, dbName, dbDir, automationKind, automation, scriptActions, problemActionsCnt}) => {
+            if (problemActionsCnt > 0) return (appReturnCode = 3)
+        const scriptActionsCnt  = scriptActions.length
+        let   missingActionsCnt = 0
+        if (scriptActionsCnt > 0) {
+            // Process each script action
+            for (const action of scriptActions) {
+                const scriptPath = localActionScriptPath(dbDir, automationKind, automation.name, automation.id, action.id)
+                if (!doesPathExist(scriptPath)) {
+                    warn(`Local script file not found: ${scriptPath}`)
+                    ++missingActionsCnt
+                    continue
+                }
+                if (options.fake) {
+                    logResult(`Would run action script:\t${scriptPath}`)
+                    continue
+                }
+                // Process this script action
+                stopSpinner()
+                useSpinner = false
+                logResult(`Running action script:\t${scriptPath}`)
+                includedFrom    = ''
+                const script    = expandScript(scriptPath)
+                // executeScript({dbName, spaceName, script: bareScript, fetch: fiberyFetch})
+                // async function executeScript({dbName, spaceName, script}) {
+                // Make a fake 'args' global for the target script, like what it expects in its normal environment (defines the proper DB Type)
+                const args = {
+                    currentUser:     null,
+                    currentEntities: [ {Type: dbName} ]
+                }
+                let f, res
+                try {
+                    eval( `f = async()=>{ ${script} ; }` )
+                    res = await f()
+                } catch (err) {
+                    debugger
+                    error(err.message)
+                }
+                log(`Script returned: ${res}`)
+            }
+        }
+        else {
+            logVerbose(`No actions found for [${dbName}] ${Capitalize(automationKind)} ${automation.name}`)
+            return (appReturnCode = 3)
+        }
+    })
+
+    if (!options.quiet) logResult(`${scriptActionsCnt} script actions ${options.fake ? 'found to execute':'executed'}`)
+}
+
+
 //---------------------------------------------------------------------------------------------------
 //  MAIN
 //
@@ -1295,13 +1601,17 @@ async function main() {
     parseCommandLineOptions()
     dbg(`${appName} ${positionals.join(' ')}\t${JSON.stringify(options)}`)
     command = positionals.shift()?.toLowerCase()
-    const haveWorkToDo = (command && command !== 'help') || 'enable' in options
+    if (options.help || command==='help') {
+        help()
+        return
+    }
+    const haveWorkToDo = command || 'enable' in options
     if (options.url) {
         myAssert(command?.match(/pull|push|validate/) || (!command && 'enable' in options), `The \`--url\` option is only valid with the \`pull\` or \`push\` or \`validate\` commands`)
         myAssert(!options.space && !options.db && !options.button && !options.rule, `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule`)
         urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)(?:\/actions\/?|\/activity\/?)?$/ )?.groups
         myAssert(urlFilter?.fields, `\`--url\` value is not a valid Fibery automation URL: ${options.url}`)
-    }   
+    }
     else if (command?.match(/pull|push|validate/))
                             myAssert(options.url||options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both), or the \`--url\` option, with the \`${command}\` command.`)
     if (command!=='help')   myAssert( positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
@@ -1334,6 +1644,9 @@ async function main() {
             break
         case 'validate':
             await validate()
+            break
+        case 'run':
+            await runScript()
             break
         case '':
             if (options.validate)
