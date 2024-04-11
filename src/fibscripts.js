@@ -749,14 +749,18 @@ function makeFilter( pattern, field='name' ) {
 // If the `--url` option is supplied, urlFilter.fields will hold the parsed url fields
 const urlFilter = {
     fields      : {},
-    findSpace   : (spaces)  => spaces?.[ Object.keys(spaces).find( (s) => s===urlFilter.fields.space ) ],
     findAuto    : (autos)   => autos.find( (a) => a.id===urlFilter.fields.id ),
+    findSpace   : (spaces)  => {
+        // In urlFilter.fields.space, " " are replaced with underscores
+        const matchSpaceName = new RegExp( urlFilter.fields.space.replace(/_/g, '[ _]') )
+        return spaces?.[ Object.keys(spaces).find((s) => matchSpaceName.exec(s)) ]
+    },
     findDb      : (space)   => {
-        // In urlFilter.fields.db, spaces in DB names are replaced with underscores
+        // In urlFilter.fields.db, " " are replaced with underscores
         const matchDbName   = new RegExp( urlFilter.fields.db.replace(/_/g, '[ _]') )
         const dbName        = Object.keys(space.types).find( (n) => n.match(matchDbName))
         return space.types[dbName]
-    }
+    },
 }
 
 // Generate all Spaces that pass the Space filter
