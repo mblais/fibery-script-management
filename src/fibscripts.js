@@ -107,8 +107,9 @@ const Capitalize        = (str)                 => str.replace(/^./, c => c.toUp
 const isAScriptAction   = (action)              => action.meta.name==='Script'
 const findScriptActions = (actions)             => actions.filter(isAScriptAction)
 const fixWindowsFsChars = (fname)               => fname?.replace(/[:;\\|/<>]/g, '_')     // Replace disallowed characters for Windows filenames
-// const classOf           = (o)                   => o?.constructor?.name ?? typeof(o)
+// const classOf        = (o)                   => o?.constructor?.name ?? typeof(o)
 const isAutomationEnabled = (a)                 => a.enabled
+const hasAllFieldValues = (obj, fields)         => !fields.find( (f) => obj[f]==null || obj[f]==='')    // Object has all named members (non-null && nonblank)
 
 //---------------------------------------------------------------------------------------------------
 //  Setup
@@ -123,6 +124,7 @@ const commandLineOptions = {
     enable:     { type: 'string',   short: 'e',                 },
     cache:      { type: 'boolean',  short: 'c',                 },
     url:        { type: 'string',   short: 'u',                 },
+    path:       { type: 'string',   short: 'p',                 },
     nogit:      { type: 'boolean',  short: 'g',  default: false },
     noclobber:  { type: 'boolean',  short: 'n',  default: false },
     fake:       { type: 'boolean',  short: 'f',  default: false },
@@ -215,7 +217,7 @@ This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and upda
 
 COMMANDS:
 
-Usage:  ${appName}  { pull | push | purge | orphans | validate | help {cmd} }  [ options... ]
+Usage:  ${appName}  { pull | push | purge | orphans | validate | run | help {cmd} }  [ options... ]
 
     help [cmd]            Show help, optionally for a specific program command
     pull                  Download and save Fibery workspace Button and Rule Javascript actions
@@ -227,40 +229,41 @@ Usage:  ${appName}  { pull | push | purge | orphans | validate | help {cmd} }  [
 
 OPTIONS: (can appear anywhere on the command line)
 
-    --workspace   -w      The Fibery workspace domain, e.g. "my.fibery.io" - or, the full path to the local workspace dir
-    --space       -s      Space   name filter
-    --db          -d      DB      name filter
-    --button      -b      Button  name filter
-    --rule        -r      Rule    name filter
-    --url         -u      URL of a specific automation to process with pull (use instead of filters)
-    --cache       -c      Use existing cached Space/DB info instead getting it from Fibery
-    --noclobber   -n      Don't overwrite any existing local scripts (used with pull/push)
-    --enable      -e      Use option value of y/n to enable/disable automations
-    --nogit       -g      Don't try to use git (when your local script files are not tracked in git)
-    --nofiles             Ignore local script files; use with \`push\` to restore automations from cache files
-    --yes         -y      Create/rename local files/directories as needed for pull operations
-    --fake        -f      Dry run - don't actually update or overwrite anything
-    --delay       -l      Delay in ms to wait before every Fibery API call
-    --nice        -i      Wait for Fibery work queues to clear before running scripts
-    --strict-validation -t Require all actions to pass validatation
-    --quiet       -q      Disable progress messages and spinners; only output a terse summary or count
-    --verbose     -v      Verbose output
-    --debug               Debug output
-    --before {date-time}  End of date range for cache files (matches before OR EQUAL)
-    --after  {date-time}  Start of date range for cache files
-    --help                Show help
+    --workspace          -w   The Fibery workspace domain, e.g. "my.fibery.io" - or, the full path to the local workspace dir
+    --space              -s   Space   name filter
+    --db                 -d   DB      name filter
+    --button             -b   Button  name filter
+    --rule               -r   Rule    name filter
+    --url                -u   URL of a specific automation to process (use instead of filters)
+    --path               -p   Local path to a specific action script file to process (use instead of filters)
+    --cache              -c   Use existing cached Space/DB info instead getting it from Fibery
+    --noclobber          -n   Don't overwrite any existing local scripts (used with pull/push)
+    --enable             -e   Use option value of y/n to enable/disable automations
+    --nogit              -g   Don't try to use git (when your local script files are not tracked in git)
+    --nofiles                 Ignore local script files; use with \`push\` to restore automations from cache files
+    --yes                -y   Create/rename local files/directories as needed for pull operations
+    --fake               -f   Dry run - don't actually update or overwrite anything
+    --delay              -l   Delay in ms to wait before every Fibery API call
+    --nice               -i   Wait for Fibery work queues to clear before running scripts
+    --strict-validation  -t   Require all actions to pass validatation
+    --quiet              -q   Disable progress messages and spinners; only output a terse summary or count
+    --verbose            -v   Verbose output
+    --debug                   Debug output
+    --before {date-time}      End of date range for cache files (matches before OR EQUAL)
+    --after  {date-time}      Start of date range for cache files
+    --help                    Show help
 
 ENVIRONMENT VARIABLES:
 
-    FIBERY                Base path containing dirs for each Fibery workspace domain you manage
-    FIBERY_DOMAIN         The Fibery workspace domain to manage (or specify this with the --workspace option)
+    FIBERY                Base path for all local storage managed by the app (cache files and automation scripts)
+    FIBERY_DOMAIN         The Fibery workspace domain to manage (or specify this with the \'--workspace\' option)
     FIBERY_API_KEY        API key for the Fibery workspace domain - get it from "Fibery Settings > API Keys"
 
 BASIC OPERATION
 
-    The Fibery workspace domain to manage (e.g. "my.fibery.io") is specified by the FIBERY_DOMAIN env var or the \`--workspace option\`. It also defines the directory name under $FIBERY where the hierarchy of Fibery scripts for the workspace will be stored.
+    The Fibery workspace domain (e.g. "my.fibery.io") must be specified by the FIBERY_DOMAIN env var or the \`--workspace option\`. It also defines the directory name (under $FIBERY) where the hierarchy of Fibery scripts for the workspace will be stored.
 
-    If FIBERY_DOMAIN is just the domain (e.g. "my.fibery.io") then the FIBERY env var specifies the parent directory (e.g. "/home/me/fibery/") for workspace directory(ies).
+    If FIBERY_DOMAIN is just the bare domain name without any other path components (e.g. just "my.fibery.io") then the FIBERY env var specifies the parent directory (e.g. "/home/me/fibery/") under a specific workspace directory will be stored.
 
     FIBERY_DOMAIN can alternatively specify the full path to the workspace directory (e.g. "/home/me/fibery/my.fibery.io"), in which case the FIBERY env var is ignored.
 
@@ -268,7 +271,9 @@ BASIC OPERATION
 
     Use \`${appName} push\` to push local *.js script files back to the Fibery workspace. Comments are inserted at the top of each script for identification and git info.
 
-    The options \`--space\` \`--db\` \`--button\` and \`--rule\` define name filters to determine which Fibery elements will be processed by a command.
+    The options \`--space\` \`--db\` \`--button\` and \`--rule\` define name filters to define and limit which Fibery elements will be processed by a command. These filters operate on Fibery object names, not file names.
+    
+    The \`--url\` and \`--path\` options are an alternative way to specify a single Fibery automation or script, respectively, to be processed by a command.
 
 FILTERS:
 
@@ -276,17 +281,17 @@ FILTERS:
 
     Filters are glob-like by default, or regex if preceded by '/' (trailing slash is not required). Any filter is negated if the first character is '!'. Filters are always case-insensitive.
 
-    If no filter is specified for a Space/DB, ALL Spaces/DBs will be processed.
+    If no filter is specified for Space or DB, ALL Spaces/DBs will be processed.
 
     If no filter is specified for a Button/Rule, NONE will be processed. So you must specify either the \`--button\` or \`--rule\` filter (or both) in order for any automations to be processed.
 
-    Maximum of one filter can be defined per category (Space/DB/Button/Rule). All supplied filters must match an item for it to be processed.
+    At most of one filter can be defined per category (Space/DB/Button/Rule). All supplied filters must match an item for it to be processed.
 
-    Instead of using the filters to specify an automation for \`pull\` or \`push\` or \`validate\`, you can use the \`--url\` option to specify the URL of a single Fibery Button/Rule.
+    Instead of using the filters to specify an automation for \`pull\` or \`push\` or \`validate\` or \`run\`, you can use the \`--url\` or \`-path\` option to specify the URL or local file path of a single Fibery Button/Rule automation/script to process.
 
 DIRECTORY STRUCTURE
 
-    ${appName} stores the data pulled from a Fibery Workspace in a hierarchy of local folders. These directories are automatically created as needed if the \`--yes\` option is specified. If \`--yes\` is not specified an error is generated for a missing directory.
+    \`${appName}\` stores the data pulled from a Fibery Workspace in a hierarchy of local folders. These directories are automatically created as needed if the \`--yes\` option is specified. If \`--yes\` is not specified an error is generated for a missing directory.
 
     The base directory containing all Fibery workspaces is defined by the FIBERY or FIBERY_DOMAIN env var. The directory structure mostly mirrors the URL structure of automations, e.g.:
     "my.fibery.io/fibery/space/{SpaceName}/database/{DBName}/automations/{button or rule}/{automation name}". The only difference from the URLs is that an automation name is used in the path instead of the ID that is used in URLs.
@@ -322,16 +327,31 @@ SCRIPT MACROS
 
     If the <path> begins with the "@" symbol, the "@" is replaced with the current FIBERY_DOMAIN directory path.
 
-    A relative path is interpreted relative to the directory of the file currently being processed; that could be a macro file in the case of one macro file including another.
+    A relative path is interpreted relative to the directory of the file *currently being processed*; that could be an included macro file in the case of one macro file including another.
 
-    Immediately after the inserted macro content the program will add a corresponding macro-end comment line of the form:
+    Immediately after the inserted macro content the program will insert a corresponding macro-end comment line of the form:
+    
         //-include <path>
-
+    
     When adding a macro-inclusion comment in a script file, you do not need to incude the corresponding macro-end comment line; the program will insert it.
 
     When a local script file is \`pushed\` to Fibery, each macro block within a source file (i.e. the lines between \`//+include\` and \`//-include\`, if present) is replaced with the current content of the referenced macro file.
 
     When pulling script files from Fibery, any macro content and comments will be left untouched, so after a \`pull\` operation your local script files will reflect what is actually on the server. But each time a local script file gets \`pushed\` back to your Fibery workspace, all its macro blocks will first be replaced by the current macro files' content.
+
+RUNNING AUTOMATIONS SCRIPTS LOCALLY
+
+    This experimental feature runs an automation script (note: NOT an entire automation, just a script) locally by simulating Fibery's script environmnet, translating a supported subset of Fibery \`context\` calls into equivalent https calls to your Fibery Workspace API.
+
+    Currently only these Fibery script methods are implemented:
+
+        fibery.executeSingleCommand()
+        fibery.createEntity()
+        fibery.createEntityBatch()
+        fibery.deleteEntity()
+        fibery.deleteEntityBatch()
+        fibery.updateEntity()
+        fibery.updateEntityBatch()
 
 EXAMPLES
 
@@ -339,7 +359,7 @@ EXAMPLES
     ${appName}  pull -b/ -r/ --noclobber                 # Pull Button and Rule scripts from Fibery, but don't overwrite any existing local script files
     ${appName}  pull -b/ -r/                             # Pull Button and Rule scripts from Fibery that don't already exist locally
     ${appName}  push -r/ -b/                             # Push ALL local Button and Rule scripts to Fibery, overwriting current Workspace scripts
-    ${appName}  pull --space=test\* -b/                  # Pull all Button scripts from Spaces beginning with "test"
+    ${appName}  pull --space=test\\* -b/                  # Pull all Button scripts from Spaces beginning with "test"
     ${appName}  pull --space='!/^test|^foo' -r/          # Pull all Rule scripts from Fibery Spaces NOT beginning with "test" or "foo"
     ${appName}  pull --rule='/test|foo'                  # Pull Rule scripts from all Rules with names containing "test" or "foo"
     ${appName}  push --space='test*' -b/                 # Push all Button scripts in Spaces beginning with "test"
@@ -347,48 +367,57 @@ EXAMPLES
     ${appName}  push --nofiles --before 2023-01-30 -b/   # Push cached Button definitions from latest cache files ≤ 2023-01-30
     ${appName}  purge --before 2023-01-30                # Delete local cache files created ≤ 2023-01-30
     ${appName}  orphans                                  # Find all "orphaned" local files and dirs that no longer correspond to the Fibery Workspace
-    ${appName}  validate -b\* -r\*                       # Check all automations for valid structure
-    ${appName}  run -sREPORTS -dCallStats -r'CreateMissingCallStats*' # Run the selected script locally (experimental)
+    ${appName}  validate -b\\* -r\\*                       # Check all automations for valid structure
+    ${appName}  run -sREPORTS -dCallStats -rCreateStats  # Run a script locally (experimental)
 `)
             break
 
         case 'pull':
             log(`
 ${appName} pull
+
     Download and save Fibery workspace Button and Rule Javascript actions. This will OVERWRITE existing local script files, so make sure you've committed any local changes before doing a pull.
 
-    Use the filter options to limit what Spaces/DBs/Buttons/Rules will be retrieved:
+    Use the filter options to limit which Spaces/DBs/Buttons/Rules will be retrieved:
         --noclobber   -n    Don't overwrite any existing local script files
         --space       -s    Space   name filter
         --db          -d    DB      name filter
         --button      -b    Button  name filter
         --rule        -r    Rule    name filter
+    OR:
+        --url         -u    Specify the URL of a specific automation to process
+        --path        -p    Specify the local path to a specific action script file to process
 `)
             break
 
         case 'push':
             log(`
 ${appName} push
+
     Push local Javascript Button and Rule actions back to Fibery workspace. This will OVERWRITE Fibery script actions, so make sure the curent Workspace scripts are backed up. A \`pull --fake\` command (without \`--cache\`) will download the current Workspace scripts to local cache; \`--fake\` prevents overwriting your lcoal script files.
 
-    If the \`--nofiles\` option is specified, local Button and Rule script source files will be ignored, and their cached definitions will be pushed instead. In this case not only action scripts will be pushed but also the complete cached automation definitions. This allows restoring complete Button/Rule definitions from old cached versions.
+    If the \`--nofiles\` option is specified, local Button and Rule script source files will be ignored, and their cached automation definitions will be pushed instead. In this case not only action scripts will be pushed but also the complete (cached) automation definitions. This allows restoring complete Button/Rule definitions from old cached versions. For such a "restore" operation you can optionally use the \`--before\` and \`--after\` options to specify a particular cache to use (the default is the most recent cache file).
 
-    Use the filter options to limit what Spaces/DBs/Buttons/Rules will be updated:
+    Use the filter options to limit which Spaces/DBs/Buttons/Rules will be updated:
         --space       -s    Space   name filter
         --db          -d    DB      name filter
         --button      -b    Button  name filter
         --rule        -r    Rule    name filter
+    OR:
+        --url         -u    Specify the URL of a specific automation to process
+        --path        -p    Specify the local path to a specific action script file to process
 `)
             break
 
         case 'purge':
             log(`
 ${appName} purge --before {date-time}
+
     Purge local cache entries that were created on or before the specified cutoff date-time.
 
     Older cache files are not automatically deleted. Use \`purge\` with \`--before\` to trim them.
 
-    Use the filter options to limit what Spaces/DBs/Buttons/Rules will be affected:
+    Use the filter options to limit which Spaces/DBs/Buttons/Rules will be affected:
         --space       -s    Space   name filter
         --db          -d    DB      name filter
 `)
@@ -397,6 +426,7 @@ ${appName} purge --before {date-time}
         case 'orphans':
             log(`
 ${appName} orphans
+
     Search for "orphaned" local files and dirs that no longer correspond to the Fibery Workspace.
 
     You can use these filter options to limit which local Space/DB dirs will be checked:
@@ -408,6 +438,7 @@ ${appName} orphans
         case 'validate':
             log(`
 ${appName} validate
+
     Test automations for valid structure.
 
     You can use these filter options to limit which automations will be checked:
@@ -415,6 +446,38 @@ ${appName} validate
         --db          -d    DB      name filter
         --button      -b    Button  name filter
         --rule        -r    Rule    name filter
+    OR:
+        --url         -u    Specify the URL of a specific automation to process
+        --path        -p    Specify the local path to a specific action script file to process
+`)
+            break
+
+        case 'run':
+            log(`
+${appName} run
+
+    Run a Fibery automation script locally (experimental).
+
+    This command runs an automation script locally (note: NOT an entire automation, just a script) by simulating Fibery's script environment and translating a supported subset of Fibery \`context\` calls into equivalent https calls to your Fibery Workspace API. Specify the \`--nice\` option to have the app automatically check your Workspace's backend processing queues (Formulas, Automation Rules, Relation Linker and Search) and wait for them to clear before processing an API call.
+
+    Currently only these Fibery script context methods are implemented - if your script calls any others it will throw an error:
+    
+        fibery.executeSingleCommand()
+        fibery.createEntity()
+        fibery.createEntityBatch()
+        fibery.deleteEntity()
+        fibery.deleteEntityBatch()
+        fibery.updateEntity()
+        fibery.updateEntityBatch()
+
+    You can use these filter options to select the scripts to be executed locally:
+        --space       -s    Space   name filter
+        --db          -d    DB      name filter
+        --button      -b    Button  name filter
+        --rule        -r    Rule    name filter
+    OR:
+        --url         -u    Specify the URL of a specific automation to process
+        --path        -p    Specify the local path to a specific action script file to process
 `)
             break
 
@@ -763,10 +826,25 @@ const urlFilter = {
     },
 }
 
+// If the `--path` option is supplied, pathFilter.fields will hold the parsed path fields
+const pathFilter = {
+    fields      : {},
+    findAuto    : (autos)   => {
+        const idMatcher = new RegExp( pathFilter.fields.id + '$' )      // last 4 chars of action id
+        return autos.find( (auto) => auto.actions.find( (action) => action.id.match(idMatcher) ) )
+    },
+    findSpace   : (spaces)  => spaces?.[ Object.keys(spaces).find((s) => s===pathFilter.fields.spaceName) ],
+    findDb      : (space)   => space.types[ `${space.name}/${pathFilter.fields.dbName}` ],
+}
+
 // Generate all Spaces that pass the Space filter
 function* spaces_filtered() {
     if (options.url) {
         const space = urlFilter.findSpace(spaces)
+        if (space) yield space
+    }
+    else if (options.path) {
+        const space = pathFilter.findSpace(spaces)
         if (space) yield space
     }
     else {
@@ -781,6 +859,8 @@ function* dbs_filtered( space ) {
     if (!space?.types) return            // This Space has NO types/DBs defined
     if (options.url)
         yield urlFilter.findDb(space)
+    else if (options.path)
+        yield pathFilter.findDb(space)
     else {
         yield* Object.values(space.types)
             .filter( makeFilter(options.db) )
@@ -796,7 +876,14 @@ function* buttons_filtered( buttons ) {
             const btn = urlFilter.findAuto(buttons)
             if (btn) yield btn
         }
-    } else {
+    }
+    else if (options.path) {
+        if (pathFilter.fields.kind==='button') {
+            const btn = pathFilter.findAuto(buttons)
+            if (btn) yield btn
+        }
+    }
+    else {
         yield* buttons
             .filter( makeFilter(options.button) )
             .sort(  (a,b) => a.name.localeCompare(b.name) )
@@ -811,7 +898,14 @@ function* rules_filtered( rules ) {
             const rule = urlFilter.findAuto(rules)
             if (rule) yield rule
         }
-    } else {
+    }
+    else if (options.path) {
+        if (pathFilter.fields.kind==='rule') {
+            const rule = pathFilter.findAuto(rules)
+            if (rule) yield rule
+        }
+    }
+    else {
         yield* rules
             .filter( makeFilter(options.rule) )
             .sort(  (a,b) => a.name.localeCompare(b.name) )
@@ -1430,6 +1524,7 @@ const context = {
         async createEntityBatch( type, entities ) {
             dbg(`context.fibery.createEntityBatch: ${type} (${entities.length})`)
             assert(entities instanceof Array)
+            await waitIfNice()
             const body = (await adjustEntitiesForApi(type, entities))
                 .map( (entity) => ({
                     command : "fibery.entity/create",
@@ -1441,6 +1536,7 @@ const context = {
         async createEntity( type, entity ) {
             dbg(`context.fibery.createEntity: ${type}`)
             assert(entity instanceof Object)
+            await waitIfNice()
             entity = await adjustEntityForApi(type, entity)
             const body = {
                 command : "fibery.entity/create",
@@ -1452,6 +1548,7 @@ const context = {
         async deleteEntityBatch( type, ids ) {
             dbg(`context.fibery.deleteEntityBatch: ${type} (${ids.length})`)
             assert(ids instanceof Array)
+            await waitIfNice()
             const body = ids.map( (id) => ({
                     command : "fibery.entity/delete",
                     args    : {type, entity:{'fibery/id': id} }
@@ -1462,6 +1559,7 @@ const context = {
         async deleteEntity( type, id ) {
             dbg(`context.fibery.createEntity: ${type}`)
             assert(entity instanceof Object)
+            await waitIfNice()
             const body = {
                 command : "fibery.entity/delete",
                 args    : {type, entity:{'fibery/id': id} }
@@ -1472,6 +1570,7 @@ const context = {
         async updateEntity( type, id, entity ) {
             dbg(`context.fibery.updateEntity: ${type} ${id}`)
             assert(entity instanceof Object)
+            await waitIfNice()
             entity = await adjustEntityForApi(type, {...entity, id})
             const body = {
                 command : "fibery.entity/update",
@@ -1483,6 +1582,7 @@ const context = {
         async updateEntityBatch( type, entities ) {
             dbg(`context.fibery.updateEntityBatch: ${type} (${entities.length})`)
             assert(entities instanceof Array)
+            await waitIfNice()
             const body = (await adjustEntitiesForApi(type, entities))
                 .map( (entity) => ({
                     command : "fibery.entity/update",
@@ -1522,7 +1622,7 @@ async function fiberyWorkspaceQueues() {
     for (const addr of queryAddrs) {
         const result = await fiberyFetch(addr, 'get')
         total += result?.queueSize
-        await delay(500)
+        await delay(350)
     }
     return total
 }
@@ -1532,7 +1632,7 @@ async function waitIfNice( delayMs=60000 ) {
     while (options.nice) {
         const queueLen  = await fiberyWorkspaceQueues()
         if (queueLen < 1) break
-        log(`Waiting for Fibery queues: ${queueLen}`)
+        log(`Waiting for Fibery queues (nice): ${queueLen}`)
         await delay(delayMs)
     }
 }
@@ -1552,7 +1652,7 @@ async function runScript() {
         const scriptActionsCnt  = scriptActions.length
         let   missingActionsCnt = 0
         if (scriptActionsCnt > 0) {
-            // Process each script action
+            // Process each matched script action
             for (const action of scriptActions) {
                 const scriptPath = localActionScriptPath(dbDir, automationKind, automation.name, automation.id, action.id)
                 if (!doesPathExist(scriptPath)) {
@@ -1577,6 +1677,7 @@ async function runScript() {
                     currentUser:     null,
                     currentEntities: [ {Type: dbName} ]
                 }
+                await waitIfNice()
                 let f, res
                 try {
                     eval( `f = async()=>{ ${script} ; }` )
@@ -1606,17 +1707,24 @@ async function main() {
     dbg(`${appName} ${positionals.join(' ')}\t${JSON.stringify(options)}`)
     command = positionals.shift()?.toLowerCase()
     if (options.help || command==='help') {
-        help()
+        help(positionals.shift())
         return
     }
     const haveWorkToDo = command || 'enable' in options
     if (options.url) {
-        myAssert(command?.match(/pull|push|validate/) || (!command && 'enable' in options), `The \`--url\` option is only valid with the \`pull\` or \`push\` or \`validate\` commands`)
-        myAssert(!options.space && !options.db && !options.button && !options.rule, `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule`)
+        myAssert(command?.match(/pull|push|run|validate/) || (!command && 'enable' in options), 'The `--url` option is only valid with the `pull` or `push` or `validate` or `run` commands')
+        myAssert(!options.space && !options.db && !options.button && !options.rule && !options.path, `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule, --path`)
         urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)(?:\/actions\/?|\/activity\/?)?$/ )?.groups
         myAssert(urlFilter?.fields, `\`--url\` value is not a valid Fibery automation URL: ${options.url}`)
     }
-    else if (command?.match(/pull|push|validate/))
+    else if (options.path) {
+        myAssert(command?.match(/pull|push|run|validate/) || (!command && 'enable' in options), 'The `--path` option is only valid with the `pull` or `push` or `validate` or `run` commands')
+        myAssert(!options.space && !options.db && !options.button && !options.rule && !options.url, 'The following options are incompatible with `--path`:  --space, --db, --button, --rule, --url')
+        myAssert(options.path.endsWith('.js') && doesPathExist(options.path), '`--path` value must be a .js script file')
+        pathFilter.fields = options.path.match(/[/\\]space[/\\](?<spaceName>[^/\\]+)[/\\]database[/\\](?<dbName>[^/\\]+)[/\\]automations[/\\](?<kind>rule|button)[/\\](?<name>[^/\\]+) ~(?<id>[0-9a-f]{4})\.js/)?.groups
+        assert( hasAllFieldValues(pathFilter.fields, ['spaceName', 'dbName', 'kind', 'name', 'id']), `'--path' value does not have the expected structure: ${options.path}`)
+    }
+    else if (command?.match(/pull|push|run|validate/))
                             myAssert(options.url||options.button||options.rule, `You must specify the \`--button\` or \`--rule\` name filter (or both), or the \`--url\` option, with the \`${command}\` command.`)
     if (command!=='help')   myAssert( positionals.length===0, `Unexpected command line arguments: ${positionals.join(' ')}`)
     if (command!=='push')   myAssert(!options.nofiles,       '`--nofiles` option can only be used with the `push` command')
@@ -1661,9 +1769,6 @@ async function main() {
             else
                 help()
             appReturnCode = process.env['FIBERY'] && process.env['FIBERY_DOMAIN'] && process.env['FIBERY_API_KEY'] ? 0:1
-            break
-        case 'help':
-            help( positionals.shift() )
             break
         default:
             myAssert(false, `Unrecognized command "${command}"`)
