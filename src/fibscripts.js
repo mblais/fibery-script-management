@@ -63,7 +63,7 @@ function log(...args) {
 
 function dbg(...args) {
     if (!debug) return
-    const msg = pc.reset(pc.dim(pc.cyan(stringify(...args))))
+    const msg = pc.reset(pc.cyan(stringify(...args)))
     if (useSpinner) {
         stopSpinner()
         spinner.start(msg)
@@ -222,7 +222,7 @@ Usage:  ${appName}  { pull | push | purge | orphans | validate | run | help {cmd
     help [cmd]            Show help, optionally for a specific program command
     pull                  Download and save Fibery workspace Button and Rule Javascript actions
     push                  Push local Javascript Button and Rule actions back to Fibery workspace
-    purge --before {date} Delete cache entries older than the specified cutoff date
+    purge --before {date} Delete local cache entries older than the specified cutoff date
     orphans               List orphaned local files and dirs that were deleted in Fibery
     validate              Check automations for valid structure
     run                   Run an automation script locally (experimental)
@@ -237,21 +237,21 @@ OPTIONS: (can appear anywhere on the command line)
     --url                -u   URL of a specific automation to process (use instead of filters)
     --path               -p   Local path to a specific action script file to process (use instead of filters)
     --cache              -c   Use existing cached Space/DB info instead getting it from Fibery
-    --noclobber          -n   Don't overwrite any existing local scripts (used with pull/push)
-    --enable             -e   Use option value of y/n to enable/disable automations
-    --nogit              -g   Don't try to use git (when your local script files are not tracked in git)
+    --noclobber          -n   Don't overwrite any existing local scripts (used with pull)
+    --enable             -e   Specify option value of y/n to enable/disable automations
+    --nogit              -g   Don't try to use git (i.e. when your local script files are not tracked in git)
     --nofiles                 Ignore local script files; use with \`push\` to restore automations from cache files
-    --yes                -y   Create/rename local files/directories as needed for pull operations
+    --yes                -y   Create/rename local files/directories as needed (used with pull)
     --fake               -f   Dry run - don't actually update or overwrite anything
     --delay              -l   Delay in ms to wait before every Fibery API call
-    --nice               -i   Wait for Fibery work queues to clear before running scripts
+    --nice               -i   Wait for Fibery work queues to clear before each API call (used with "run")
     --strict-validation  -t   Require all actions to pass validatation
     --quiet              -q   Disable progress messages and spinners; only output a terse summary or count
     --verbose            -v   Verbose output
     --debug                   Debug output
-    --before {date-time}      End of date range for cache files (matches before OR EQUAL)
-    --after  {date-time}      Start of date range for cache files
-    --help                    Show help
+    --before {date-time}      End of date range for selecting cache file (matches before OR EQUAL)
+    --after  {date-time}      Start of date range for selecting cache file
+    --help                    Show this help
 
 ENVIRONMENT VARIABLES:
 
@@ -1099,23 +1099,25 @@ function validateAutomation( dbName, automationKind, automation ) {
         const title             = `[${dbName}] ${Capitalize(automationKind)} "${automation.name}" action #${actionNum} (${actionType})`
         const validParams       = validActionParams[actionType] ?? myAssert(false, `${title}: unknown actionType`)
         if (!action.args) {
-            warn(`No action.args for ${title}`)
+            if (validParams.args.min > 0)
+                warn(`No action.args for ${title}`)
             continue
         }
+        // Validate action args
         const actionArgsKeys    = Object.keys(action.args)
         const unexpectedKeys    = actionArgsKeys.filter( k => !validParams.args.valid.includes(k) )
         const actionArgsCount   = actionArgsKeys.length
         let   isaProblem        = false
         if (unexpectedKeys.length > 0) {
-            myWarn(`${title}: args contains unexpected keys: ${unexpectedKeys.map(k=>`"${k}"`).join(', ')}`)
+            myWarn(`${title}: Action args contains unexpected keys: ${unexpectedKeys.map(k=>`"${k}"`).join(', ')}`)
             isaProblem = true
         }
         if (actionArgsCount > validParams.args.max) {
-            myWarn(`${title}: contains too many keys (${actionArgsCount}) - max=${validParams.args.max}`)
+            myWarn(`${title}: Action args contains too many keys (${actionArgsCount}) - max=${validParams.args.max}`)
             isaProblem = true
         }
         else if (actionArgsCount < validParams.args.min) {
-            myWarn(`${title}: contains too few keys (${actionArgsCount}) - min=${validParams.args.min}`)
+            myWarn(`${title}: Action args contains too few keys (${actionArgsCount}) - min=${validParams.args.min}`)
             isaProblem = true
         }
         if (isaProblem) ++problemActionsCnt
@@ -1512,8 +1514,8 @@ const context = {
             const isArrayBody = body instanceof Array
             if (!isArrayBody)   body = [body]
             const data      = await fiberyFetch( '/api/commands', 'post', body )
-            const message   = data?.reduce( (acc, result, i) => acc +
-                (result?.success===false ? `[${i}]: ${result.message}\n` : ''), '' )
+            const message   = data?.reduce( (acc, el, i) => acc +
+                (el?.success===false || el?.result?.success===false ? `[${i}]: ${JSON.stringify(el.result,null,2).replace(/\\"/g, '"')}\n` : ''), '' )
             if (message) {
                 debugBreak()
                 error('fibery Entity API errors: '+message)
