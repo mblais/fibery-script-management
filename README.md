@@ -9,7 +9,7 @@ This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and upda
     help [cmd]            Show help, optionally for a specific program command
     pull                  Download and save Fibery workspace Button and Rule Javascript actions
     push                  Push local Javascript Button and Rule actions back to Fibery workspace
-    purge --before {date} Delete cache entries older than the specified cutoff date
+    purge --before {date} Delete local cache entries older than the specified cutoff date
     orphans               List orphaned local files and dirs that were deleted in Fibery
     validate              Check automations for valid structure
     run                   Run an automation script locally (experimental)
@@ -24,116 +24,119 @@ This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and upda
     --url                -u   URL of a specific automation to process (use instead of filters)
     --path               -p   Local path to a specific action file to process (use instead of filters)
     --cache              -c   Use existing cached Space/DB info instead getting it from Fibery
-    --noclobber          -n   Don't overwrite any existing local scripts (used with pull/push)
-    --enable             -e   Use option value of y/n to enable/disable automations
-    --nogit              -g   Don't try to use git (when your local script files are not tracked in git)
+    --noclobber          -n   Don't overwrite any existing local scripts (used with pull)
+    --enable             -e   Specify option value of y/n to enable/disable automations
+    --nogit              -g   Don't try to use git (i.e. when your local script files are not tracked in git)
     --nofiles                 Ignore local script files; use with `push` to restore automations from cache files
-    --yes                -y   Create/rename local files/directories as needed for pull operations
+    --yes                -y   Create/rename local files/directories as needed (used with pull)
     --fake               -f   Dry run - don't actually update or overwrite anything
     --delay              -l   Delay in ms to wait before every Fibery API call
-    --nice               -i   Wait for Fibery work queues to clear before running scripts
+    --nice               -i   Wait for Fibery work queues to clear before each API call (used with "run")
     --strict-validation  -t   Require all actions to pass validatation
     --quiet              -q   Disable progress messages and spinners; only output a terse summary or count
     --verbose            -v   Verbose output
     --debug                   Debug output
-    --before {date-time}      End of date range for cache files (matches before OR EQUAL)
-    --after  {date-time}      Start of date range for cache files
+    --before {date-time}      End of date range for selecting cache file (matches before OR EQUAL)
+    --after  {date-time}      Start of date range for selecting cache file
     --help                    Show help
 
 ## REQUIRED ENVIRONMENT VARIABLES
 
-    FIBERY                Base path for all local storage managed by the app (cache files and automation scripts)
-    FIBERY_DOMAIN         Which Fibery workspace domain to manage (or specify this with the `--workspace` option)
-    FIBERY_API_KEY        API key for your FIBERY_DOMAIN - get it from "Fibery Settings \> API Keys"
+|Environment Variable|Value|
+|--|--|
+|FIBERY|Base path for all local storage managed by the app (i.e. cache files and saved automation scripts)|
+|FIBERY_DOMAIN|Which Fibery workspace domain to manage -- or specify this with the `--workspace` option)|
+|FIBERY_API_KEY|API key for the specified FIBERY_DOMAIN -- get it from "Fibery Settings \> API Keys"|
+|
 
 ## BASIC OPERATION
 
-Your Fibery workspace domain (e.g. "my.fibery.io") must be specified by the FIBERY_DOMAIN env var or the `--workspace` option. It also specifies the directory name (under $FIBERY) which the hierarchy of Fibery scripts for the workspace is stored.
+Your Fibery workspace domain (e.g. "my.fibery.io") must be specified by the FIBERY_DOMAIN env var or the `--workspace` option. It also specifies the directory name (under $FIBERY) which the hierarchy of Fibery scripts (and cache files) for the workspace is stored.
 
-If FIBERY_DOMAIN is just the bare domain name without any other path components (e.g. just "my.fibery.io") then the FIBERY env var specifies the parent directory (e.g. "/home/me/fibery/") under a specific workspace directory will be stored.
+If FIBERY_DOMAIN is just the bare domain name without any other path components (e.g. just "my.fibery.io") then the FIBERY env var specifies the parent directory (e.g. `/home/me/fibery/`) under a specific workspace directory will be stored; for this example the local Fibery workspace directory would be `/home/me/fibery/my.fibery.io/`.
 
-Alternatively, FIBERY_DOMAIN can specify the full path to the workspace directory (e.g. "/home/me/fibery/my.fibery.io/"), in which case the FIBERY env var is ignored.
+Alternatively, the FIBERY_DOMAIN env var can specify the full path to the local Fibery workspace directory (e.g. `/home/me/fibery/my.fibery.io/`), in which case the FIBERY env var is ignored.
 
-Use `fibscripts pull` to pull automation scripts from a Fibery workspace and store them in local *.js files under a directory hierarchy that mirrors the workspace's Spaces and DBs.
+Use `fibscripts pull` to pull automation scripts from the Fibery workspace and store them in local *.js files within a directory hierarchy that mirrors the workspace's Spaces and DBs. The local path to a saved local action script file will be similar to the URL of the Fibery page for editing the Action.
 
-Use `fibscripts push` to push local *.js script files back to the Fibery workspace. Comments are inserted at the top of each script for identification and git info.
+Use `fibscripts push` to push these local *.js script files back to the Fibery workspace. Comments are inserted at the top of each script for identification and git info.
 
-The options `--space` `--db` `--button` and `--rule` define name filters to define and limit which Fibery elements will be processed by a command. These filters operate on Fibery object names, not file names.
+The options `--space` `--db` `--button` and `--rule` define name filters which define and limit the specific Fibery elements (Spaces, DBs, Rules and Actions) to be processed by a command. *NOTE: These filters are applied to Fibery object names, not file names.*
 
-The `--url` and `--path` options are an alternative way to specify a single Fibery automation or script, respectively, to be processed by a command.
+The `--url` and `--path` options are alternative ways to specify a single Fibery automation or script, respectively, to be processed by a command.
 
-## FILTERS
+## Selecting Actions to process
 
-Filters are used to define the scope of a program operation by defining which Spaces/DBs/Buttons/Rules will be affected.
+"Name filters" are the basic way to define the scope of program operation by defining which Spaces/DBs/Buttons/Rules will be affected. Name filters apply to Fibery object names, not file names.
 
 Filters are glob-like by default, or regex if preceded by '/' (trailing slash is not required). Any filter is negated if the first character is '!'. Filters are always case-insensitive.
 
-If no filter is specified for a Space/DB, ALL Spaces/DBs will be processed.
+If no filter is specified for a Space/DB, ALL Spaces/DBs match (be processed).
 
-If no filter is specified for a Button/Rule, NONE will be processed. So you must specify either the `--button` or `--rule` filter (or both) in order for any automations to be processed.
+If no filter is specified for a Button/Rule, NONE will match (be processed). So you must specify either the `--button` or `--rule` filter (or both) in order for any automations to be processed.
 
-At most of one filter can be defined per category (Space/DB/Button/Rule). All supplied filters must match an item for it to be processed.
+At most of one filter can be defined per category (Space/DB/Button/Rule). All specified filters must match an item for it to be processed.
 
-Instead of using the filters to specify an automation for `pull` or `push` or `validate` or `run`, you can use the `--url` or `-path` option to specify the URL or local file path of a single Fibery Button/Rule automation/script to process.
+Instead of using the filters to specify an automation for `pull` or `push` or `validate` or `run`, you can alternatively use the `--url` or `-path` option to specify the URL or local file path of a single Fibery Button/Rule automation/script to process.
 
 ## DIRECTORY STRUCTURE
 
-`fibscripts` stores the scripts and API results data pulled from a Fibery Workspace in a hierarchy of local folders. These directories are automatically created as needed if the `--yes` option is specified. If `--yes` is not specified an error is generated for a missing local directory.
+`fibscripts` stores the scripts and API results data pulled from a Fibery Workspace in a hierarchy of local directories. These directories are automatically created as needed if the `--yes` option is specified. If `--yes` is not specified an error is generated for a missing local directory.
 
-The base directory containing all Fibery workspaces is defined by the FIBERY or FIBERY_DOMAIN env var. The directory structure mostly mirrors the URL structure of automations, e.g.:
+The base directory for the local files is defined by the FIBERY or FIBERY_DOMAIN env var. The directory structure mostly mirrors the URL structure of automations, e.g.:
 
     my.fibery.io/fibery/space/{SpaceName}/database/{DBName}/automations/{button or rule}/{automation name}
 
-The only difference between the Fibery URLs and corresponding local directory paths is that *automation names* are used in the local paths instead of the *automation IDs* that are used in Fibery URLs.
+The main difference between a Fibery Automation URL and its corresponding local directory paths is that *automation names* are used in the local paths instead of *automation IDs* in Fibery URLs. Additionally, local script filenames add a disambiguation suffix (tilde and last four digits of the Action ID) after the Action name. Action script filenames have the form `${automationName} ~${actionIdSuffix}.js`. E.g.:
 
-E.g., the URL:  "https://my.fibery.io/fibery/space/Projects/database/Tasks/automations/button/64ac4ff5ff58afe1abad6537/actions"
-would correspond to the local path:  "my.fibery.io/fibery/space/Projects/database/Tasks/automations/button/My Button Name ~{id}.js"
+    Automation URL: https://my.fibery.io/fibery/space/Projects/database/Tasks/automations/button/64a5371/actions
+    Local path:             my.fibery.io/fibery/space/Projects/database/Tasks/automations/button/My Button Name ~a3f0.js
 
-Your Fibery Workspace must be specified via the FIBERY_DOMAIN env var or the `--workspace` option; e.g. `--workspace=my.fibery.io`.
+Your Fibery Workspace is specified via the FIBERY_DOMAIN env var or the `--workspace` option; e.g. `--workspace=my.fibery.io`.
 
 Each script action in a Button/Rule automation will be stored in its respective directory as described above, named either `{Button-name} ~{id}.js` or `{Rule-name} ~{id}.js`. The '{id}' within the name is the last four characters of the script's Action ID and is used to correlate each script file to a particular action within its automation (because there could be more than one script-action within a Button/Rule automation).
 
 The program will detect when a Space/DB/Automation has been renamed in Fibery, and if the `--yes` program option was specified the program will try to rename the corresponding local file/directory to match the new Fibery name using `git mv` (unless `--nogit` is specified, in which case the directory is renamed with the default OS rename function).
 
-Some cache directories and housekeeping files are also created throughout the file hierarchy; their names always begin with a period.
+The script also creates some cache directories and housekeeping files throughout the file hierarchy; their names always begin with a period.
 
 ## CACHING
 
-Every Fibery API query result is stored in a local cache file or directory that begins with a period. These cached API results can be reused by the program instead of re-querying Fibery by specifying the `--cache` option. This can save time if you have many Spaces and DBs and automations.
+Every Fibery API query result is stored in a local cache file or directory that begins with a period. These cached API results will be reused by the program instead of re-querying Fibery if the `--cache` option. This can save time if you have many Spaces, DBs and automations.
 
-These cache files also serve as backups, since they contain the *complete definitions of all automations* pulled from Fibery (not just the script actions).
+These cache files also serve as backups, since they contain the *complete definitions of Automations* pulled from Fibery (not just the script actions).
 
-Old cache files are not automatically deleted; Use the `purge` program command to trim them.
+Old cache files are not automatically deleted; Use the `purge` program command to trim them by date.
 
-When the `--cache` option is specified without any dates, the most recent cache files will be used. If you want the program to use different (earlier) cache files, specify a date range with the `--before` and/or `--after` options. A cache file's filename encodes its creation date+time, and this is used to find the most recent cache files within the date range specified by `--before` and `--after`. When a date range is specified, the program will always use the most recent cache files found within that range.
+When the `--cache` option is specified without any dates, the most recent cache files will be used. If you want the program to use different (earlier) cache files, specify a date range with the `--before` and/or `--after` options. A cache file's filename encodes its creation date+time, and this (NOT the file's system timestamps) is used to determine the most recent cache files within the date range specified by `--before` and `--after`. When a date range is manually specified with these options, the program will always use the most recent cache files found within the specified date range.
 
 ## SCRIPT MACROS
 
-A simple macro feature allows your local script files to "include" other local source files. Macros are expanded recursively so included files can themselves include additional files.
+A simple macro feature allows your local script files to "include" other local source files. Macros are expanded recursively, so included files can themselves include additional files.
 
 Within a script file, to include the content of a different source file, specify its path in a single-line comment of the form:
 
     //+include <path>
 
-This directs the program to insert the file specified by `<path>` before the next line. The comment must start at the beginning of a line (no preceding whitespace).
+This directs the program to insert the file specified by `<path>` before the next line. This comment must start at the beginning of a line (no preceding whitespace).
 
-If the `<path>` begins with the "@" symbol, the "@" is replaced with the current FIBERY_DOMAIN directory path.
+If `<path>` begins with the "@" symbol, the "@" is replaced with the current FIBERY_DOMAIN directory path.
 
-A relative path is interpreted relative to the directory of the file *currently being processed*; that could be an included macro file in the case of one macro file including another.
+A relative include `<path>` is interpreted relative to the directory of the file *currently being processed*; that could be an included macro file in the case of one macro file including another.
 
-Immediately after the inserted macro content the program will insert a corresponding macro-end comment line of the form:
+Immediately after the inserted macro content the program will insert a corresponding "macro end" comment line of the form:
 
     //-include <path>
 
 When adding a macro-inclusion comment in a script file, you do not need to incude the corresponding macro-end comment line; the program will insert it.
 
-When a local script file is `pushed` to Fibery, each macro block within a source file (i.e. the lines between `//+include` and `//-include`, if present) will be **replaced with the current content of the referenced macro file**.
+When a local script file is `pushed` to Fibery, each macro block within a source file (i.e. the lines between `//+include` and `//-include`, if present) will be **replaced with the current content of the referenced macro file(s)**.
 
-When pulling script files from Fibery, any macro content and comments will be left untouched, so after a `pull` operation your local script files will reflect what is actually in your Fibery Workspace. But each time a local script file gets `pushed` back to your Fibery workspace, all its macro blocks will first be replaced by the current macro files' content.
+When pulling script files from Fibery, any macro content and comments will be left untouched, so after a `pull` operation your local script files will reflect what is actually in your Fibery Workspace. But each time a local script file gets `pushed` back to your Fibery workspace, all its macro blocks will first be updated with the current macro files' content.
 
 ## RUNNING AUTOMATIONS SCRIPTS LOCALLY
 
-This experimental feature runs an automation script (note: NOT an entire automation, just a script) locally by simulating Fibery's script environment and translating a supported subset of Fibery `context` calls into equivalent https calls to your Fibery Workspace API.
+This experimental feature runs an automation script (note: NOT an entire automation; just a script) locally by simulating Fibery's script environment and translating a subset of Fibery `context` calls into equivalent https calls to your Fibery Workspace API.
 
 Currently only these Fibery script methods are implemented:
 
