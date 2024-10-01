@@ -47,13 +47,12 @@ This is a Node.js app that uses UNDOCUMENTED Fibery.io API calls to get and upda
 |FIBERY|Base path for all local storage managed by the app (i.e. cache files and saved automation scripts)|
 |FIBERY_DOMAIN|Which Fibery workspace domain to manage -- or specify this with the `--workspace` option)|
 |FIBERY_API_KEY|API key for the specified FIBERY_DOMAIN -- get it from "Fibery Settings \> API Keys"|
-|
 
 ## BASIC OPERATION
 
-Your Fibery workspace domain (e.g. "my.fibery.io") must be specified by the FIBERY_DOMAIN env var or the `--workspace` option. It also specifies the directory name (under $FIBERY) which the hierarchy of Fibery scripts (and cache files) for the workspace is stored.
+Your Fibery workspace domain (e.g. "my.fibery.io") must be specified by the FIBERY_DOMAIN env var or the `--workspace` option. It also defines the directory name (under $FIBERY) where the hierarchy of Fibery scripts (and cache files) for the workspace is stored.
 
-If FIBERY_DOMAIN is just the bare domain name without any other path components (e.g. just "my.fibery.io") then the FIBERY env var specifies the parent directory (e.g. `/home/me/fibery/`) under a specific workspace directory will be stored; for this example the local Fibery workspace directory would be `/home/me/fibery/my.fibery.io/`.
+If FIBERY_DOMAIN is just the bare domain name without any other path components (e.g. just "my.fibery.io") then the FIBERY env var specifies the parent directory (e.g. `/home/me/fibery/`) under which a specific workspace directory will be stored; in this example the local Fibery workspace directory would be `/home/me/fibery/my.fibery.io/`.
 
 Alternatively, the FIBERY_DOMAIN env var can specify the full path to the local Fibery workspace directory (e.g. `/home/me/fibery/my.fibery.io/`), in which case the FIBERY env var is ignored.
 
