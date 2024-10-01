@@ -104,7 +104,7 @@ const doesPathExist     = (fpath)               => { try { return fs.statSync(fp
 const doesDirContain    = (dirPath, fileName)   => doesPathExist(path.join(dirPath, fileName))
 const joinNonBlank      = (delimiter, ...args)  => args?.filter( (arg) => arg!=null && arg!='' )?.join(delimiter)
 const Capitalize        = (str)                 => str.replace(/^./, c => c.toUpperCase())
-const isAScriptAction   = (action)              => action.meta.name==='Script'
+const isAScriptAction   = (action)              => action.meta?.name==='Script' || action.args?.script?.type==='value'
 const findScriptActions = (actions)             => actions.filter(isAScriptAction)
 const fixWindowsFsChars = (fname)               => fname?.replace(/[:;\\|/<>]/g, '_')     // Replace disallowed characters for Windows filenames
 // const classOf        = (o)                   => o?.constructor?.name ?? typeof(o)
