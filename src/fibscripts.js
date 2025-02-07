@@ -3,7 +3,8 @@
 //---------------------------------------------------------------------------------------------------
 // git push -u origin main
 
-import got from 'got'
+import  'dotenv/config'
+import   got from 'got'
 import   childProcess    from 'node:child_process'
 import   path            from 'node:path'
 import   fs              from 'node:fs'
@@ -272,7 +273,7 @@ BASIC OPERATION
     Use \`${appName} push\` to push local *.js script files back to the Fibery workspace. Comments are inserted at the top of each script for identification and git info.
 
     The options \`--space\` \`--db\` \`--button\` and \`--rule\` define name filters to define and limit which Fibery elements will be processed by a command. These filters operate on Fibery object names, not file names.
-    
+
     The \`--url\` and \`--path\` options are an alternative way to specify a single Fibery automation or script, respectively, to be processed by a command.
 
 FILTERS:
@@ -330,9 +331,9 @@ SCRIPT MACROS
     A relative path is interpreted relative to the directory of the file *currently being processed*; that could be an included macro file in the case of one macro file including another.
 
     Immediately after the inserted macro content the program will insert a corresponding macro-end comment line of the form:
-    
+
         //-include <path>
-    
+
     When adding a macro-inclusion comment in a script file, you do not need to incude the corresponding macro-end comment line; the program will insert it.
 
     When a local script file is \`pushed\` to Fibery, each macro block within a source file (i.e. the lines between \`//+include\` and \`//-include\`, if present) is replaced with the current content of the referenced macro file.
@@ -461,7 +462,7 @@ ${appName} run
     This command runs an automation script locally (note: NOT an entire automation, just a script) by simulating Fibery's script environment and translating a supported subset of Fibery \`context\` calls into equivalent https calls to your Fibery Workspace API. Specify the \`--nice\` option to have the app automatically check your Workspace's backend processing queues (Formulas, Automation Rules, Relation Linker and Search) and wait for them to clear before processing an API call.
 
     Currently only these Fibery script context methods are implemented - if your script calls any others it will throw an error:
-    
+
         fibery.executeSingleCommand()
         fibery.createEntity()
         fibery.createEntityBatch()
@@ -510,7 +511,7 @@ async function fiberyFetch( address, method, body=null ) {
 
         const response = await got(url, {...payload, resolveBodyOnly:false, responseType:'text'})
         if (response?.statusCode==200) return JSON.parse(response.body)
-        error(`${response?.statusCode}: ${response?.statusText}\n${url}`, method, payload)    
+        error(`${response?.statusCode}: ${response?.statusText}\n${url}`, method, payload)
     } catch (err) {
         error(`${joinNonBlank('\n', err?.cause, response?.status, response?.statusText, err?.message)}\n${url}`)
     }
@@ -809,10 +810,12 @@ function makeFilter( pattern, field='name' ) {
              field, negate )
 }
 
-// If the `--url` option is supplied, urlFilter.fields will hold the parsed url fields
+// If the `--url` option is supplied, urlFilter.fields will hold the url fields parsed from the URL
 const urlFilter = {
-    fields      : {},
-    findAuto    : (autos)   => autos.find( (a) => a.id===urlFilter.fields.id ),
+    fields      : null,
+    findAuto    : (autos)   =>
+        // Match an automation by its ID
+         autos.find( (a) => a.id===urlFilter.fields.id ),
     findSpace   : (spaces)  => {
         // In urlFilter.fields.space, " " are replaced with underscores
         const matchSpaceName = new RegExp( urlFilter.fields.space.replace(/_/g, '[ _]') )
@@ -824,6 +827,13 @@ const urlFilter = {
         const dbName        = Object.keys(space.types).find( (n) => n.match(matchDbName))
         return space.types[dbName]
     },
+    setFields   : (url)     => {
+        if (urlFilter.fields = url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)(?:\/actions\/?|\/activity\/?)?$/ )?.groups ) {
+            // Need to call decodeURIComponent() for Space/DB name because the names retrieved from the Fibery API are *not* URI-encoded
+            urlFilter.fields.space  = decodeURIComponent(urlFilter.fields.space)
+            urlFilter.fields.db     = decodeURIComponent(urlFilter.fields.db)
+        }
+    }
 }
 
 // If the `--path` option is supplied, pathFilter.fields will hold the parsed path fields
@@ -964,14 +974,13 @@ function expandScript( scriptPath ) {
         if (!lines[lineNo].startsWith('//+include ')) {
             // Perform macro substitutions
             const line      = lines[lineNo].replace(/\$SRC\b/g, `"${src}:${lineNo+1}"`) + '\n'
-            // result          += (result ? '\n':'') + line
             result          += line
             continue
         }
         // Found a file-inclusion-macro-start comment line
         includedFrom        = `\n  included from: ${scriptPath}` + includedFrom
         const includeStart  = lines[lineNo]
-        const includeEnd    = includeStart.replace('//+', '//-')                          // comment line that marks the macro end
+        const includeEnd    = includeStart.replace('//+', '//-')                        // comment line that marks the macro end
         let   includePath   = includeStart.match( /\s+(.*)/ )?.[1]
                             ?.trim()?.replace(/^(["'])(.*)\1$/, "$2")                   // strip quotes surrounding the macro path
         myAssert(includePath, `Missing file-include path on line ${lineNo} of ${scriptPath}${includedFrom}`)
@@ -986,18 +995,6 @@ function expandScript( scriptPath ) {
     }
     return result
 }
-
-
-// Perform macro substitutions on a script
-// function macroSubstitutions( text ) {
-//     let result = '', lineNo = 0
-//     for (let line of text.split(/\r\n|\r|\n/)) {
-//         ++lineNo
-//         result += line.replace(/\b__LINE__\b/g, lineNo) + '\n'
-//     }
-//     return result
-// }
-
 
 // Get a Space/DB Id from its token file
 function getDirTokenId( path, suffix ) {
@@ -1450,7 +1447,7 @@ async function adjustEntityForApi( type, entity ) {
         'Modification Date' : 'fibery/modification-date',
     }
     const translateFieldName = (fieldName) => fiberyFields[fieldName] ?? `${spaceName}/${fieldName}`
-    
+
     // Add Space-name to field-names
     const addSpaceNameToFieldNames = (entity) =>
           entity instanceof Array  ? entity.map( (v) => addSpaceNameToFieldNames(v) )
@@ -1716,7 +1713,7 @@ async function main() {
     if (options.url) {
         myAssert(command?.match(/pull|push|run|validate/) || (!command && 'enable' in options), 'The `--url` option is only valid with the `pull` or `push` or `validate` or `run` commands')
         myAssert(!options.space && !options.db && !options.button && !options.rule && !options.path, `The following options are incompatible with \`--url\`:  --space, --db, --button, --rule, --path`)
-        urlFilter.fields = options.url.match( /^https?:\/\/(?<domain>[^'"/:]+\.fibery\.io)(?<port>:\d+)?\/fibery\/space\/(?<space>[^/]+)\/database\/(?<db>[^/]+)\/automations\/(?<kind>rule|button)\/(?<id>\w+)(?:\/actions\/?|\/activity\/?)?$/ )?.groups
+        urlFilter.setFields(options.url)
         myAssert(urlFilter?.fields, `\`--url\` value is not a valid Fibery automation URL: ${options.url}`)
     }
     else if (options.path) {
